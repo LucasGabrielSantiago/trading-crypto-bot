@@ -1,3 +1,5 @@
+name: crypto-bot
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -28,6 +30,7 @@ services:
     environment:
       BIND_HOST: 0.0.0.0
       OPEN_BROWSER: "0"
+      PUBLIC_PORT: "8766"
       DATABASE_URL: postgresql+psycopg://bot:${POSTGRES_PASSWORD:-troque_esta_senha}@postgres:5432/trading
       DB_PATH: /data/bot.db
       KILL_FILE: /data/STOP
@@ -36,7 +39,7 @@ services:
     volumes:
       - bot_data:/data
     ports:
-      - "127.0.0.1:8765:8765"
+      - "127.0.0.1:8766:8765"
 
 volumes:
   postgres_data:

@@ -23,13 +23,17 @@ usa as próprias chaves de teste.
 
 ## Rodar com Docker
 
-Com o Docker Desktop aberto, use `Iniciar-Docker.bat` ou rode:
+Dê dois cliques em `Iniciar-Docker.bat`. Ele instala o Docker Desktop com sua confirmação, abre o Docker
+se estiver fechado, cria o `.env` com uma senha aleatória, sobe os contêineres e abre a interface.
+Depois de instalar o Docker pela primeira vez, pode ser preciso reiniciar o Windows.
+
+Pelo terminal, com o Docker aberto:
 
 ```bash
 docker compose up -d --build
 ```
 
-Depois, abra http://127.0.0.1:8765. O app e o PostgreSQL ficam ligados em segundo plano e voltam
+Depois, abra http://127.0.0.1:8766. Sem Docker, a interface usa a porta 8765. O app e o PostgreSQL ficam ligados em segundo plano e voltam
 sozinhos ao reiniciar o Docker. O bot religa se estava ligado, com a mesma configuração. Se você o
 desligou ou se todos os pares pararam, ele continua desligado.
 
