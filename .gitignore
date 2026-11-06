@@ -8,3 +8,4 @@ STOP
 *.db-*
 settings.json
 autostart.json
+manual_operations.json

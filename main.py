@@ -5,7 +5,7 @@ import sys
 
 import pandas as pd
 
-from bot.backtest import run_backtest, synthetic_candles, validate
+from bot.backtest import evaluate, run_backtest, synthetic_candles, validate
 from bot.config import load_settings
 from bot.exchange import Exchange, create_testnet_client, fetch_public_history
 from bot.runner import Portfolio, make_bot
@@ -46,6 +46,16 @@ def validation(args, settings):
     data, source = load_data(args, settings)
     settings = settings.for_symbol(settings.symbol_list[0])
     print(f"Fonte: {source} ({len(data)} candles)")
+    if settings.strategy != "ranges":
+        # A busca de parâmetros existe só para ranges; as outras são testadas como estão.
+        outcome = evaluate(data, settings, args.fee, args.slippage)
+        print(f"Estratégia {settings.strategy}, sem busca de parâmetros\n")
+        print("Primeiros 70%:")
+        report(outcome["first"])
+        print("\nÚltimos 30%:")
+        report(outcome["second"])
+        print(f"\nResultado: {'APROVADA para seguir na testnet' if outcome['approved'] else 'REPROVADA'}")
+        return
     outcome = validate(data, settings, args.fee, args.slippage)
     if outcome is None:
         print("REPROVADA: nenhuma configuração gerou operações suficientes.")

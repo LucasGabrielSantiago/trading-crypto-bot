@@ -36,6 +36,8 @@ class GridBot(Bot):
 
     def startup(self):
         self.ex.load()
+        if self.grid:
+            self._sync()  # Vendas e compras podem ter executado com o bot desligado.
         position = self.position
         if position:
             base_total, _ = self.ex.balances()

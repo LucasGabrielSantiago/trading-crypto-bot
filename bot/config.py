@@ -1,5 +1,6 @@
 """Configuração do bot. Não existe opção de modo real: o MVP só opera na testnet."""
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, fields, replace
@@ -9,7 +10,7 @@ OVERRIDES_PATH = Path(os.environ.get("SETTINGS_PATH", "settings.json"))
 ENV_PATH = Path(os.environ.get("ENV_FILE_PATH", ".env"))
 MAX_SYMBOLS = 8
 EDITABLE = (
-    "symbols", "timeframe", "strategy", "lookback", "zone_pct", "min_reward_risk",
+    "symbols", "pair_settings", "timeframe", "strategy", "lookback", "zone_pct", "min_reward_risk",
     "catastrophe_stop_pct", "grid_levels",
     "fast_sma", "slow_sma", "capital_usdt", "risk_per_trade", "stop_loss_pct",
     "max_position_pct", "max_daily_loss_pct",
@@ -25,6 +26,7 @@ class Settings:
     api_secret: str = ""
     symbol: str = "BTC/USDT"
     symbols: str = "BTC/USDT"
+    pair_settings: str = "{}"
     timeframe: str = "4h"
     strategy: str = "ranges"
     lookback: int = 60
@@ -54,6 +56,11 @@ class Settings:
             raise ValueError("A grade precisa ter de 2 a 20 níveis")
         if not 0 <= self.catastrophe_stop_pct < 1:
             raise ValueError("Stop de catástrofe inválido")
+        for symbol, values in self.pair_map.items():
+            if values.get("strategy", self.strategy) not in STRATEGIES:
+                raise ValueError(f"Estratégia inválida em {symbol}")
+            if values.get("timeframe", self.timeframe) not in TIMEFRAMES:
+                raise ValueError(f"Tempo gráfico inválido em {symbol}")
         names = self.symbol_list
         if not 1 <= len(names) <= MAX_SYMBOLS:
             raise ValueError(f"Escolha de 1 a {MAX_SYMBOLS} pares")
@@ -76,12 +83,25 @@ class Settings:
         names = [item.strip().upper() for item in self.symbols.split(",") if item.strip()]
         return list(dict.fromkeys(names))
 
+    @property
+    def pair_map(self) -> dict:
+        try:
+            values = json.loads(self.pair_settings or "{}")
+        except ValueError as error:
+            raise ValueError("Configuração dos pares inválida") from error
+        if not isinstance(values, dict):
+            raise ValueError("Configuração dos pares inválida")
+        return values
+
     def for_symbol(self, symbol: str) -> "Settings":
-        """Cada par fica com uma parte igual do capital e arquivo de dados próprio."""
+        """Cada par tem parte igual do capital, dados próprios e estratégia opcional."""
+        own = self.pair_map.get(symbol, {})
         path = Path(self.db_path)
         name = symbol.replace("/", "")
         return replace(
-            self, symbol=symbol, symbols=symbol,
+            self, symbol=symbol, symbols=symbol, pair_settings="{}",
+            strategy=own.get("strategy", self.strategy),
+            timeframe=own.get("timeframe", self.timeframe),
             capital_usdt=self.capital_usdt / len(self.symbol_list),
             db_path=str(path.with_name(f"{path.stem}_{name}{path.suffix}")),
         )
@@ -129,14 +149,19 @@ def load_settings() -> Settings:
         db_path=env("DB_PATH", "bot.db"),
         kill_file=env("KILL_FILE", "STOP"),
     )
-    return apply_overrides(settings, read_overrides())
+    try:
+        return apply_overrides(settings, read_overrides())
+    except (TypeError, ValueError) as error:
+        logging.getLogger("bot").error("settings.json ignorado por ter valor inválido: %s", error)
+        return settings
 
 
 def read_overrides() -> dict:
     try:
-        return json.loads(OVERRIDES_PATH.read_text(encoding="utf-8"))
+        values = json.loads(OVERRIDES_PATH.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
         return {}
+    return values if isinstance(values, dict) else {}
 
 
 def apply_overrides(settings: Settings, values: dict) -> Settings:

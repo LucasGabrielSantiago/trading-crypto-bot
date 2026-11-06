@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bot de Trading</title>
 <style>
-:root{--bg:#0F1419;--card:#151C24;--raised:#1C2530;--line:#3B4A5A;--text:#E8EDF2;--muted:#A9B6C3;--blue:#7CC0FF;--orange:#FFB454;--warn-bg:#3A2C12;--warn:#FFC46B}
+:root{--bg:#0B0E14;--card:#131722;--raised:#1E222D;--line:#2A2E39;--text:#D1D4DC;--muted:#9AA1AE;--blue:#5B9CF6;--orange:#FFB454;--warn-bg:#3A2C12;--warn:#FFC46B}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,"Segoe UI",system-ui,sans-serif}
 .shell{display:flex;flex-wrap:wrap;min-height:100vh}
@@ -40,8 +40,25 @@ th{color:var(--muted);font-weight:500}th,td{padding:8px}
 .chip[aria-pressed=true]{background:#263442;border-color:var(--blue)}
 .tip{position:absolute;pointer-events:none;background:var(--raised);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:13px;white-space:nowrap;transform:translate(-50%,-110%)}
 .chart-tools{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
-.chart-chip{min-height:36px;padding:0 10px;font-size:13px}
-.chart-frame{position:relative;min-width:0}
+.chart-tools{border-bottom:1px solid var(--line);padding-bottom:8px}
+.chart-chip{min-height:32px;padding:0 10px;font-size:13px;border:0;background:transparent;color:var(--muted);border-radius:6px}
+.chart-chip:hover{background:var(--raised);color:var(--text)}
+.chart-chip[aria-pressed=true]{background:rgba(91,156,246,.16);color:var(--blue);border:0}
+.chart-frame{position:relative;min-width:0;flex:1 1 300px}
+.chart-layout{display:flex;flex-wrap:wrap;gap:0;align-items:stretch}
+.draw-tools{display:flex;flex-direction:column;gap:1px;flex:0 0 auto;padding:4px 4px 4px 0;border-right:1px solid var(--line);margin-right:4px}
+.draw-tool{position:relative;width:34px;height:34px;display:flex;align-items:center;justify-content:center;border:0;border-radius:5px;background:transparent;color:#B2B5BE;cursor:pointer;padding:0}
+.draw-tool:hover{background:var(--raised);color:#fff}
+.draw-tool[aria-pressed=true]{background:rgba(91,156,246,.18);color:var(--blue)}
+.draw-tool:focus-visible{outline:2px solid var(--blue)}
+.draw-tool::after{content:attr(data-tip);position:absolute;left:40px;top:50%;transform:translateY(-50%);z-index:20;display:none;white-space:nowrap;padding:5px 8px;border-radius:4px;background:#2A2E39;color:#fff;font:12px/1.3 inherit;pointer-events:none}
+.draw-tool:hover::after{display:block}
+.draw-sep{height:1px;background:var(--line);margin:4px 6px}
+.draw-layer{position:absolute;left:0;top:0;z-index:4;pointer-events:none}
+.draw-layer.drawing{pointer-events:auto;cursor:crosshair;touch-action:none}
+.draw-hit{cursor:pointer}
+.draw-hit:hover line,.draw-hit:hover rect{filter:brightness(1.3)}
+@media (max-width:640px){.draw-tools{flex-direction:row;flex-wrap:wrap;flex-basis:100%}.draw-sep{display:none}}
 .chart-surface{width:100%;min-height:440px}
 .chart-legend{position:absolute;z-index:3;top:6px;left:8px;right:72px;display:flex;flex-wrap:wrap;gap:4px 10px;font-size:13px;pointer-events:none;color:var(--text);text-shadow:0 0 3px #151C24}
 .notice{padding:14px 16px;border-radius:8px;background:var(--raised)}.notice.warn{background:var(--warn-bg);color:var(--warn)}
@@ -88,10 +105,11 @@ ol{margin:0;padding-left:20px}
           <input id="pairSearch" type="text" placeholder="Buscar: ETH, SOL..." autocomplete="off" spellcheck="false">
           <p id="pairCount" class="muted small"></p>
           <div id="pairResults" class="chips" style="max-height:176px;overflow-y:auto"></div>
-          <p class="muted small">Pares em USDT da testnet. O capital para trading é dividido igualmente entre os pares escolhidos.</p>
+          <p class="muted small">Pares em USDT da testnet. O capital para trading é dividido igualmente. Você pode adicionar ou remover pares com o bot ligado. Para remover, o par não pode ter operação aberta.</p>
         </div>
-        <label>Estratégia<select id="strategy"><option value="ranges">Máximas e mínimas</option><option value="sma">Médias móveis</option><option value="dca">Preço médio (3 compras)</option><option value="breakout">Rompimento</option><option value="reversion">Reversão à média</option><option value="momentum">Momentum</option><option value="grid">Grid</option></select></label>
-        <label>Tempo gráfico<select id="timeframe"><option value="1h">1 hora</option><option value="4h">4 horas</option><option value="1d">1 dia</option></select></label>
+        <p id="pairHint" class="muted small"></p>
+        <label><span id="strategyLabel">Estratégia</span><select id="strategy"><option value="ranges">Máximas e mínimas</option><option value="sma">Médias móveis</option><option value="dca">Preço médio (3 compras)</option><option value="breakout">Rompimento</option><option value="reversion">Reversão à média</option><option value="momentum">Momentum</option><option value="grid">Grid</option></select></label>
+        <label><span id="timeframeLabel">Tempo gráfico</span><select id="timeframe"><option value="1h">1 hora</option><option value="4h">4 horas</option><option value="1d">1 dia</option></select></label>
         <p id="strategyHelp" class="muted small"></p>
         <div class="form">
           <label data-strategies="ranges dca breakout grid"><span class="row"><span>Candles da região</span><b id="lookbackOut"></b></span><input id="lookback" type="range" min="20" max="120" step="10"></label>
@@ -114,7 +132,7 @@ ol{margin:0;padding-left:20px}
         </div>
       </div>
       <div class="grow form">
-        <div class="card"><h2>Candles reais recentes</h2><div id="chartPairs" class="chips" style="margin-bottom:12px"></div><div id="previewChart"><p class="muted">Carregando gráfico...</p></div><p class="muted small" style="margin-top:8px">As setas azuis com "C" mostram onde esta configuração compraria. Arraste para mover e use a roda do mouse para dar zoom.</p></div>
+        <div class="card"><h2 style="margin-bottom:8px">Candles reais recentes</h2><div id="chartPairs" class="chips" style="margin-bottom:12px"></div><div id="previewChart"><p class="muted">Carregando gráfico...</p></div><p class="muted small" style="margin-top:8px">As setas azuis com "C" mostram onde esta configuração compraria. Arraste para mover e use a roda do mouse para dar zoom.</p></div>
         <div class="notice" id="summary"></div>
         <div class="card">
           <div class="top"><h2 style="margin:0">Resultado do teste</h2><button id="test" class="btn primary">Testar estratégia</button></div>
@@ -134,6 +152,10 @@ ol{margin:0;padding-left:20px}
         <button id="off" class="btn" disabled>Desligar bot</button>
         <button id="emergency" class="btn danger" disabled>Parar e vender</button>
       </div>
+    </div>
+    <div id="reconnect" class="notice warn top" hidden>
+      <span>O bot está desligado, mas há posições abertas. Alvo e stop na exchange continuam ativos. Religue para acompanhar, encerrar ou seguir comprando.</span>
+      <button id="reconnectBtn" class="btn danger">Religar bot</button>
     </div>
     <div id="panelPairs" class="chips"></div>
     <div class="kpis">
@@ -162,7 +184,7 @@ ol{margin:0;padding-left:20px}
         <button id="opOpen" class="btn primary" type="submit">Abrir operação</button>
       </form>
     </div>
-    <div class="card"><h2>Capital por par</h2><div class="box"><table><thead><tr><th>Par</th><th>Situação</th><th>Capital do par</th><th>Em trading</th><th>Disponível</th><th>Resultado</th></tr></thead><tbody id="panelCapital"></tbody></table></div></div>
+    <div class="card"><h2>Capital por par</h2><div class="box"><table><thead><tr><th>Par</th><th>Estratégia</th><th>Situação</th><th>Capital do par</th><th>Em trading</th><th>Disponível</th><th>Resultado</th></tr></thead><tbody id="panelCapital"></tbody></table></div></div>
     <div class="card"><h2>Últimas ordens</h2><div class="box"><table><thead><tr><th>Par</th><th>Lado</th><th>Quantidade</th><th>Preço</th><th>Status</th><th>Motivo</th></tr></thead><tbody id="orders"></tbody></table></div></div>
   </section>
 
@@ -209,6 +231,7 @@ ol{margin:0;padding-left:20px}
 </main>
 </div>
 <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+<script src="/static/drawings.js"></script>
 <script src="/static/chart.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -217,8 +240,12 @@ const num = (v, d = 2) => Number(v).toLocaleString('pt-BR', { minimumFractionDig
 const short = (v) => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 let state = null, view = null, formReady = false, saveTimer = null, confirmTimer = null;
 let closeArmed = null, closeTimer = null;
+const STRATEGY_NAMES = { ranges: 'Máximas e mínimas', sma: 'Médias móveis', dca: 'Preço médio', breakout: 'Rompimento', reversion: 'Reversão à média', momentum: 'Momentum', grid: 'Grid' };
+const TIMEFRAME_NAMES = { '1h': '1h', '4h': '4h', '1d': '1d' };
+let pairConfig = {}, previewRequest = 0;
+const configOf = (name) => ({ strategy: state.settings.strategy, timeframe: state.settings.timeframe, ...pairConfig[name] });
 let pairs = [], market = [], chartPair = null, panelPair = null;
-const GREEN = '#22C55E', RED = '#EF4444';
+const GREEN = '#089981', RED = '#F23645';
 
 async function api(path, body) {
   const options = { method: body === undefined ? 'GET' : 'POST', headers: { 'X-Bot-Token': token } };
@@ -248,13 +275,14 @@ const sliders = {
   capital: ['capital_usdt', 1, (v) => short(v) + ' USDT'], risk: ['risk_per_trade', 100, (v) => short(v) + '%'], pos: ['max_position_pct', 100, (v) => short(v) + '%'], day: ['max_daily_loss_pct', 100, (v) => short(v) + '%'],
 };
 function fillForm(s) {
-  $('strategy').value = s.strategy; $('timeframe').value = s.timeframe;
-  pairs = s.symbols.split(',').map((p) => p.trim()).filter(Boolean); renderPairs();
+  pairConfig = JSON.parse(s.pair_settings || '{}');
+  pairs = s.symbols.split(',').map((p) => p.trim()).filter(Boolean);
+  chartPair = pairs[0]; renderPairs(); syncSelects();
   for (const [id, [key, scale]] of Object.entries(sliders)) $(id).value = s[key] * scale;
   labels(); formReady = true;
 }
 function values() {
-  const out = { symbols: pairs.join(','), strategy: $('strategy').value, timeframe: $('timeframe').value };
+  const out = { symbols: pairs.join(','), pair_settings: JSON.stringify(pairConfig) };
   for (const [id, [key, scale]] of Object.entries(sliders)) out[key] = Number($(id).value) / scale;
   return out;
 }
@@ -262,7 +290,7 @@ function labels() {
   for (const [id, [, , format]] of Object.entries(sliders)) $(id + 'Out').textContent = format($(id).value);
   const sma = $('strategy').value === 'sma';
   const dca = $('strategy').value === 'dca';
-  const strategy = $('strategy').value, ladder = dca || strategy === 'grid';
+  const strategy = $('strategy').value || 'ranges', ladder = dca || strategy === 'grid';
   document.querySelectorAll('[data-strategies]').forEach((el) => { el.hidden = !el.dataset.strategies.split(' ').includes(strategy); });
   $('riskFields').hidden = ladder; $('catastropheField').hidden = !ladder;
   $('strategyHelp').textContent = {
@@ -304,29 +332,62 @@ function chips(box, names, active, pick) {
     b.setAttribute('aria-pressed', String(name === active)); b.addEventListener('click', () => pick(name)); return b;
   }));
 }
+async function setPairs(next) {
+  const previous = pairs, previousConfig = pairConfig;
+  pairConfig = Object.fromEntries(next.map((name) => [name, pairs.includes(name) ? configOf(name) : { strategy: $('strategy').value, timeframe: $('timeframe').value }]));
+  pairs = next; renderPairs(); syncSelects();
+  if (!state.running) { changed(); return; }
+  try {
+    await api('/api/pairs', { symbols: next, pairSettings: pairConfig });
+    await refresh(); labels(); preview();
+    const text = `Pares atualizados: ${next.join(', ')}. O capital foi redividido.`;
+    message(text); setTimeout(() => { if ($('message').textContent === text) message(''); }, 4000);
+  } catch (e) { pairs = previous; pairConfig = previousConfig; renderPairs(); syncSelects(); message(e.message, true); }
+}
+function syncSelects() {
+  const own = configOf(chartPair);
+  $('strategy').value = own.strategy; $('timeframe').value = own.timeframe;
+  $('strategyLabel').textContent = `Estratégia de ${chartPair}`;
+  $('timeframeLabel').textContent = `Tempo gráfico de ${chartPair}`;
+  $('pairHint').textContent = pairs.length > 1 ? 'Clique em um par no gráfico para configurar a estratégia dele.' : '';
+}
+async function changePairStrategy() {
+  const previous = pairConfig;
+  pairConfig = { ...pairConfig, [chartPair]: { strategy: $('strategy').value, timeframe: $('timeframe').value } };
+  renderPairs(); labels();
+  if (!state.running) { previewRequest += 1; changed(); return; }
+  try {
+    await api('/api/pairs', { symbols: pairs, pairSettings: pairConfig });
+    await refresh(); preview();
+    const text = `${chartPair} agora usa ${STRATEGY_NAMES[$('strategy').value]} em ${$('timeframe').value}.`;
+    message(text); setTimeout(() => { if ($('message').textContent === text) message(''); }, 4000);
+  } catch (e) { pairConfig = previous; syncSelects(); renderPairs(); labels(); message(e.message, true); }
+}
 function renderPairs() {
-  const locked = state && state.running;
   $('selectedPairs').replaceChildren(...pairs.map((name) => {
-    const b = document.createElement('button'); b.className = 'chip'; b.textContent = `${name} ×`; b.disabled = locked || pairs.length === 1;
+    const own = state ? configOf(name) : {}; const b = document.createElement('button'); b.className = 'chip'; b.textContent = `${name} · ${STRATEGY_NAMES[own.strategy] || ''} · ${own.timeframe || ''} ×`; b.disabled = pairs.length === 1;
+    b.title = pairs.length === 1 ? 'Mantenha pelo menos um par' : `Remover ${name}`;
     b.setAttribute('aria-label', `Remover ${name}`);
-    b.addEventListener('click', () => { pairs = pairs.filter((p) => p !== name); renderPairs(); changed(); }); return b;
+    b.addEventListener('click', () => setPairs(pairs.filter((p) => p !== name))); return b;
   }));
   if (!pairs.includes(chartPair)) chartPair = pairs[0];
-  chips($('chartPairs'), pairs, chartPair, (name) => { chartPair = name; renderPairs(); preview(); });
+  chips($('chartPairs'), pairs, chartPair, (name) => { chartPair = name; renderPairs(); syncSelects(); labels(); preview(); });
   const term = $('pairSearch').value.trim().toUpperCase();
   const available = market.filter((name) => !pairs.includes(name) && name.includes(term));
   const found = available.slice(0, 80);
   $('pairCount').textContent = market.length ? `${available.length} de ${market.length} pares disponíveis${available.length > found.length ? '. Busque para ver os demais.' : ''}` : '';
   chips($('pairResults'), found, null, (name) => {
     if (pairs.length >= state.maxSymbols) { message(`Escolha no máximo ${state.maxSymbols} pares.`, true); return; }
-    pairs.push(name); chartPair = name; $('pairSearch').value = ''; renderPairs(); changed();
+    chartPair = name; $('pairSearch').value = ''; setPairs([...pairs, name]);
   });
   if (!market.length) $('pairCount').textContent = 'Carregando pares...';
 }
 let studioChart = null, panelChart = null, liveSymbol = null, liveLoaded = 0, previewSymbol = null;
 async function preview() {
+  const request = ++previewRequest;
   try {
     const data = await api('/api/preview', { ...values(), symbol: chartPair });
+    if (request !== previewRequest) return; // Resposta antiga não pode trocar o gráfico.
     if (!studioChart) studioChart = new BotChart($('previewChart'));
     if (previewSymbol !== `${chartPair}-${$('timeframe').value}`) { studioChart.reset(); previewSymbol = `${chartPair}-${$('timeframe').value}`; }
     studioChart.update(data);
@@ -354,23 +415,23 @@ async function updateLive(data) {
 }
 function renderResults() {
   const v = state.validation, box = $('results'), current = state.validationCurrent;
-  $('test').disabled = v.state === 'running' || state.running; $('test').textContent = v.state === 'running' ? 'Testando...' : 'Testar estratégia';
+  $('test').disabled = v.state === 'running'; $('test').textContent = v.state === 'running' ? 'Testando...' : 'Testar estratégia';
   if (v.state === 'running') { box.textContent = 'Baixando candles de cada par e calculando. Isso pode levar alguns minutos.'; return; }
   if (v.state === 'error') { box.textContent = v.message; return; }
   if (v.state !== 'done' || !current) { box.innerHTML = '<p class="muted">Teste esta configuração antes de ligar o bot.</p>'; return; }
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Par</th><th>Retorno 70%</th><th>Retorno 30%</th><th>Segurar, 30%</th><th>Operações</th><th>Maior perda aberta</th><th>Mais tempo preso</th><th>Resultado</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Par</th><th>Estratégia</th><th>Retorno 70%</th><th>Retorno 30%</th><th>Segurar, 30%</th><th>Operações</th><th>Maior perda aberta</th><th>Mais tempo preso</th><th>Resultado</th></tr></thead>';
   const body = table.createTBody();
   for (const pair of v.pairs) {
-    const cells = pair.error ? [pair.symbol, '-', '-', '-', '-', '-', '-', 'Sem dados'] : [
-      pair.symbol, `${num(pair.first.return_pct)}%`, `${num(pair.second.return_pct)}%`, `${num(pair.second.matched_hold_pct)}%`,
+    const cells = pair.error ? [pair.symbol, '-', '-', '-', '-', '-', '-', '-', 'Sem dados'] : [
+      pair.symbol, `${STRATEGY_NAMES[pair.strategy]} · ${pair.timeframe}`, `${num(pair.first.return_pct)}%`, `${num(pair.second.return_pct)}%`, `${num(pair.second.matched_hold_pct)}%`,
       pair.first.trades + pair.second.trades,
-      ['dca', 'grid'].includes(state.settings.strategy) ? `${num(Math.min(pair.first.max_open_loss_pct, pair.second.max_open_loss_pct))}%` : '-',
-      ['dca', 'grid'].includes(state.settings.strategy) ? `${num(Math.max(pair.first.longest_hold_days, pair.second.longest_hold_days), 0)} dias` : '-',
+      ['dca', 'grid'].includes(pair.strategy) ? `${num(Math.min(pair.first.max_open_loss_pct, pair.second.max_open_loss_pct))}%` : '-',
+      ['dca', 'grid'].includes(pair.strategy) ? `${num(Math.max(pair.first.longest_hold_days, pair.second.longest_hold_days), 0)} dias` : '-',
       (pair.approved ? 'Aprovado' : 'Reprovado') + (pair.first.open_at_end || pair.second.open_at_end ? ' (terminou preso)' : '')];
     const row = body.insertRow(); cells.forEach((t) => { row.insertCell().textContent = t; });
   }
-  const total = body.insertRow(); ['Média', `${num(v.firstReturn)}%`, `${num(v.secondReturn)}%`, '', '', '', '', ''].forEach((t) => { total.insertCell().textContent = t; });
+  const total = body.insertRow(); ['Média', '', `${num(v.firstReturn)}%`, `${num(v.secondReturn)}%`, '', '', '', '', ''].forEach((t) => { total.insertCell().textContent = t; });
   const wrap = document.createElement('div'); wrap.className = 'box'; wrap.appendChild(table);
   const verdict = document.createElement('p'); verdict.className = 'notice' + (v.approved ? '' : ' warn'); verdict.style.marginTop = '12px';
   verdict.textContent = v.approved
@@ -390,9 +451,11 @@ function renderPanel() {
   const data = state.snapshots[panelPair], open = all.filter((d) => d.position);
   $('pause').disabled = $('off').disabled = $('emergency').disabled = !state.running;
   $('pause').textContent = state.paused ? 'Retomar entradas' : 'Pausar novas entradas';
+  const openOff = !state.running && all.some((d) => d.position);
+  $('reconnect').hidden = !openOff;
   const pairCount = names.length || state.settings.symbols.split(',').length;
-  $('panelTitle').textContent = `${pairCount} ${pairCount > 1 ? 'pares' : 'par'} · ${state.settings.timeframe}`;
-  $('kStatus').textContent = !state.running ? 'Desligado' : state.paused ? 'Entradas pausadas' : !all.length ? 'Iniciando' : open.length ? `${open.length} em operação` : all.some((d) => d.status.startsWith('grade')) ? 'Grade ativa' : 'Aguardando sinal';
+  $('panelTitle').textContent = state.running || openOff ? `${pairCount} ${pairCount > 1 ? 'pares' : 'par'} em operação` : 'Bot desligado';
+  $('kStatus').textContent = !state.running ? (openOff ? 'Desligado, com posições' : 'Desligado') : state.paused ? 'Entradas pausadas' : !all.length ? 'Iniciando' : open.length ? `${open.length} em operação` : all.some((d) => d.status.startsWith('grade')) ? 'Grade ativa' : 'Aguardando sinal';
   chips($('panelPairs'), names, panelPair, (name) => { panelPair = name; renderPanel(); });
   const stopped = Object.entries(state.halted);
   $('halted').hidden = !stopped.length; $('halted').textContent = stopped.map(([k, v]) => `${k}: ${v}`).join(' | ');
@@ -404,7 +467,7 @@ function renderPanel() {
   $('kInvested').textContent = `Investido: ${num(sum('invested'))} USDT`;
   $('kAvailable').textContent = `${num(sum('available'))} USDT`;
   $('kOpen').textContent = `Em aberto: ${signed(sum('openResult'))}`;
-  const capitalRows = all.map((d) => [d.symbol, state.halted[d.symbol] ? 'Parado' : d.position ? 'Em operação' : d.status, `${num(d.equity)} USDT`, `${num(d.trading)} USDT`, `${num(d.available)} USDT`, signed(d.equity - d.capital)]);
+  const capitalRows = all.map((d) => [d.symbol, d.manual ? 'Manual' : `${STRATEGY_NAMES[d.strategy]} · ${d.timeframe}`, state.halted[d.symbol] ? 'Parado' : d.position ? 'Em operação' : d.status, `${num(d.equity)} USDT`, `${num(d.trading)} USDT`, `${num(d.available)} USDT`, signed(d.equity - d.capital)]);
   tableRows($('panelCapital'), capitalRows);
   $('kResult').textContent = `${result >= 0 ? '+' : ''}${num(result)} USDT`;
   $('kResult').style.color = result >= 0 ? GREEN : RED;
@@ -430,7 +493,7 @@ function renderPanel() {
       if (closeArmed !== d.symbol) { closeArmed = d.symbol; clearTimeout(closeTimer); closeTimer = setTimeout(() => { closeArmed = null; renderPanel(); }, 5000); renderPanel(); return; }
       closeArmed = null; act(async () => { await api('/api/operations/close', { symbol: d.symbol }); });
     });
-    return [...rows, close];
+    return state.running ? [...rows, close] : rows;
   }));
   const sides = { buy: 'Compra', sell: 'Venda' }, statuses = { filled: 'Executada', failed: 'Falhou', pending: 'Pendente' };
   const orders = all.flatMap((d) => d.orders).sort((a, b) => b.created_at - a.created_at).slice(0, 10);
@@ -517,8 +580,7 @@ async function refresh() {
   $('maxPairs').textContent = state.maxSymbols;
   if (view === 'connect' && state.hasKeys && !$('keysResult').textContent) show('studio');
   if (!view) show(!state.hasKeys ? 'connect' : state.running ? 'panel' : 'studio');
-  document.querySelectorAll('#studio input, #studio select').forEach((el) => { el.disabled = state.running; });
-  if (state.message || !$('message').textContent.startsWith('Operação')) message(state.message, state.message && state.message.startsWith('Bot parado'));
+    if (state.message || !/^(Operação|Pares)/.test($('message').textContent)) message(state.message, state.message && state.message.startsWith('Bot parado'));
   renderResults(); renderStart(); renderPanel();
   if (state.hasKeys && Date.now() - walletLoaded > 30000) { walletLoaded = Date.now(); loadWallet(); }
 }
@@ -545,7 +607,9 @@ $('newOperation').addEventListener('submit', (event) => {
   }).finally(() => { $('opOpen').disabled = false; });
 });
 document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
-document.querySelectorAll('#studio input[type=range], #studio select').forEach((el) => el.addEventListener('input', changed));
+document.querySelectorAll('#studio input[type=range]').forEach((el) => el.addEventListener('input', changed));
+$('strategy').addEventListener('change', changePairStrategy);
+$('timeframe').addEventListener('change', changePairStrategy);
 $('saveKeys').addEventListener('click', async () => {
   $('keysResult').textContent = 'Conectando...';
   try {
@@ -557,6 +621,7 @@ $('saveKeys').addEventListener('click', async () => {
 });
 $('test').addEventListener('click', () => act(async () => { clearTimeout(saveTimer); await api('/api/settings', values()); await api('/api/validate', {}); }));
 $('start').addEventListener('click', () => act(async () => { await api('/api/bot/start', {}); show('panel'); }));
+$('reconnectBtn').addEventListener('click', () => act(() => api('/api/bot/start', { reconnect: true })));
 $('pause').addEventListener('click', () => act(() => api('/api/bot/pause', { paused: !state.paused })));
 $('off').addEventListener('click', () => act(() => api('/api/bot/stop', {})));
 $('emergency').addEventListener('click', () => {

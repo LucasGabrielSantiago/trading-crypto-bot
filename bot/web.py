@@ -25,6 +25,7 @@ from .indicators import indicator_frame
 from .exchange import (
     Exchange, create_testnet_client, fetch_public_history, fetch_testnet_history,
 )
+from .grid import GridBot
 from .runner import DcaBot, Halt, ManualBot, Portfolio, make_bot
 from .storage import Storage
 from .strategy import BUY, build_plan
@@ -33,6 +34,7 @@ PORT = 8765
 HISTORY_CANDLES = {"1h": 4380, "4h": 4380, "1d": 1460}
 CACHE_SECONDS = 300
 LIVE_CACHE_SECONDS = 20
+IDLE_CACHE_SECONDS = 5
 WALLET_CACHE_SECONDS = 30
 CHART_CANDLES = 500
 LIVE_HISTORY_CANDLES = 1000
@@ -52,6 +54,15 @@ def clean(value):
 
 def fingerprint(settings):
     return json.dumps({key: getattr(settings, key) for key in EDITABLE}, sort_keys=True)
+
+
+def same_configuration(saved, settings):
+    """Campos novos de uma atualização não contam como mudança de configuração."""
+    try:
+        values = json.loads(saved)
+    except ValueError:
+        return False
+    return all(getattr(settings, key, None) == value for key, value in values.items())
 
 
 def result_view(result):
@@ -95,6 +106,8 @@ class Controller:
         self.validation = {"state": "idle"}
         self.cache = {}
         self.symbols_cache = None
+        self.idle_cache = None
+        self.message_until = None
         self.wallet_exchange = None
         self.wallet_key = None
         self.wallet_cache = None
@@ -138,10 +151,12 @@ class Controller:
         })
 
     def preview(self, settings, symbol):
-        frame = self.candles(settings, symbol, HISTORY_CANDLES[settings.timeframe])
-        return self.chart_view(frame, settings, symbol)
+        pair = settings.for_symbol(symbol)
+        frame = self.candles(pair, symbol, HISTORY_CANDLES[pair.timeframe])
+        return self.chart_view(frame, pair, symbol)
 
     def live_view(self, settings, symbol):
+        settings = settings.for_symbol(symbol)
         key = ("live", symbol, settings.timeframe)
         cached = self.cache.get(key)
         if cached and time.time() - cached[0] < LIVE_CACHE_SECONDS:
@@ -184,10 +199,12 @@ class Controller:
         for symbol in settings.symbol_list:
             try:
                 pair = settings.for_symbol(symbol)
-                frame = self.candles(settings, symbol, HISTORY_CANDLES[settings.timeframe])
+                frame = self.candles(pair, symbol, HISTORY_CANDLES[pair.timeframe])
                 outcome = evaluate(frame, pair)
                 pairs.append({
                     "symbol": symbol,
+                    "strategy": pair.strategy,
+                    "timeframe": pair.timeframe,
                     "approved": outcome["approved"],
                     "candles": len(frame),
                     "first": result_view(outcome["first"]),
@@ -241,9 +258,10 @@ class Controller:
     def resume(self, settings):
         """Depois de reiniciar o contêiner, religa só se a configuração for a mesma."""
         path = Path(settings.db_path).with_name("autostart.json")
-        if path.exists() and path.read_text(encoding="utf-8") == fingerprint(settings):
+        if path.exists() and same_configuration(path.read_text(encoding="utf-8"), settings):
             self.start(settings, resumed=True)
             self.message = "Bot religado automaticamente depois de reiniciar."
+            self.message_until = time.time() + 60
 
     def _clear_autostart(self):
         if self.autostart_path:
@@ -259,6 +277,12 @@ class Controller:
             for symbol, amount in self._manual_pairs(settings).items():
                 if symbol not in settings.symbol_list:
                     bots.append(self._manual_bot(settings, symbol, amount))
+            known = {bot.s.symbol for bot in bots}
+            for symbol in self.stored_files(settings):
+                if symbol not in known:  # Posição de um par que saiu da lista continua sob controle.
+                    bot = self._stored_bot(settings, symbol, self.exchange_factory)
+                    if bot:
+                        bots.append(bot)
             self.portfolio = Portfolio(
                 bots, settings.poll_seconds, self.trade_history,
                 lambda symbol: self._manual_closed(settings, symbol),
@@ -274,6 +298,7 @@ class Controller:
             self._clear_autostart()
         finally:
             self.portfolio = None
+            self.idle_cache = None
             if os.path.exists(settings.kill_file):
                 os.remove(settings.kill_file)
 
@@ -284,6 +309,53 @@ class Controller:
     def _wait(self, seconds):
         self.wake.wait(seconds)
         self.wake.clear()
+
+    def stored_files(self, settings):
+        """Lista os arquivos de par, mesmo de pares que saíram da configuração."""
+        base = Path(settings.db_path)
+        found = {}
+        for file in sorted(base.parent.glob(f"{base.stem}_*USDT.db")):
+            name = file.stem[len(base.stem) + 1:]
+            found[f"{name[:-4]}/USDT"] = file
+        return found
+
+    def _stored_bot(self, settings, symbol, exchange_for):
+        """Monta o bot certo para uma posição salva, ou devolve None se não houver posição."""
+        pair = settings.for_symbol(symbol)
+        db = Storage(pair.db_path)
+        position, grid = db.get("position"), db.get("grid")
+        held = grid and any(cell["state"] == "sell" for cell in grid["cells"])
+        if held:
+            pair = dataclasses.replace(pair, strategy="grid")
+            bot = GridBot(pair, exchange_for(pair), db)
+        elif position and position.get("levels"):
+            pair = dataclasses.replace(pair, strategy="dca")
+            bot = DcaBot(pair, exchange_for(pair), db)
+        elif position:
+            bot = ManualBot(pair, exchange_for(pair), db)
+        else:
+            db.conn.close()
+            return None
+        return bot
+
+    def idle_snapshots(self, settings):
+        """Mostra as posições salvas enquanto o bot está desligado."""
+        if self.idle_cache and time.time() - self.idle_cache[0] < IDLE_CACHE_SECONDS:
+            return self.idle_cache[1]
+        views = {}
+        for symbol in self.stored_files(settings):
+            bot = self._stored_bot(settings, symbol, lambda pair: None)
+            if bot is None:
+                continue
+            try:
+                bot.last_price = self.live_view(settings, symbol)["candles"][-1]["close"]
+            except Exception:
+                bot.last_price = bot.position["entry_price"]
+            bot.status = "bot desligado"
+            views[symbol] = bot.snapshot()
+            bot.db.conn.close()
+        self.idle_cache = (time.time(), clean(views))
+        return self.idle_cache[1]
 
     def _manual_path(self, settings):
         return Path(settings.db_path).with_name("manual_operations.json")
@@ -331,17 +403,71 @@ class Controller:
                     raise ValueError(f"O limite é de {MAX_SYMBOLS} pares ao mesmo tempo")
                 bot = self._manual_bot(settings, symbol, amount)
                 bot.startup()
-                bot.open_manual(amount, target_pct, stop_pct)
+                # Entra no controle antes da compra: se o OCO falhar, a posição não fica órfã.
                 portfolio.add_bot(bot)
                 pairs = self._manual_pairs(settings)
                 pairs[symbol] = amount
                 self._save_manual(settings, pairs)
+                bot.open_manual(amount, target_pct, stop_pct)
                 return
-            if isinstance(bot, DcaBot) or settings.strategy == "grid":
+            if isinstance(bot, (DcaBot, GridBot)):
                 raise ValueError(f"{symbol} já é controlado pela estratégia automática")
             bot.open_manual(amount, target_pct, stop_pct)
 
         self._command(action)
+
+    def update_pairs(self, settings, symbols, pair_settings=None, extra=None):
+        """Troca pares, estratégias e risco com o bot ligado, sem mexer em ordens abertas."""
+        values = {**(extra or {}), "symbols": symbols}
+        if pair_settings is not None:
+            values["pair_settings"] = pair_settings
+        new = apply_overrides(settings, values)
+
+        def plan(symbol):
+            pair = new.for_symbol(symbol)
+            return pair.strategy, pair.timeframe
+
+        def action(portfolio):
+            current = settings.symbol_list
+            removed = [s for s in current if s not in new.symbol_list and s in portfolio.bots]
+            added = [s for s in new.symbol_list if s not in current]
+            for symbol in new.symbol_list:
+                bot = portfolio.bots.get(symbol)
+                if symbol in current and bot and (bot.s.strategy, bot.s.timeframe) != plan(symbol):
+                    removed.append(symbol)
+                    added.append(symbol)
+                elif symbol in current and bot is None:
+                    added.append(symbol)
+            for symbol in removed:
+                if portfolio.bots[symbol].position:
+                    raise ValueError(f"Encerre a operação de {symbol} antes de mudar ou remover o par")
+            for symbol in added:
+                if symbol in portfolio.bots and symbol not in removed:
+                    raise ValueError(f"{symbol} já tem uma operação manual aberta")
+            if len(portfolio.bots) - len(removed) + len(added) > MAX_SYMBOLS:
+                raise ValueError(f"O limite é de {MAX_SYMBOLS} pares ao mesmo tempo")
+            fresh = []
+            for symbol in added:
+                pair = new.for_symbol(symbol)
+                bot = make_bot(pair, self.exchange_factory(pair), Storage(pair.db_path))
+                bot.startup()
+                fresh.append(bot)
+            for symbol in removed:
+                portfolio.remove_bot(symbol)
+            for bot in fresh:
+                portfolio.add_bot(bot)
+            for symbol in new.symbol_list:
+                bot = portfolio.bots[symbol]
+                pair = new.for_symbol(symbol)
+                if pair.capital_usdt != bot.s.capital_usdt:
+                    # O capital do par mudou: o limite diário recomeça com a nova base.
+                    bot.db.set("day", None)
+                bot.s = pair
+
+        self._command(action)
+        save_overrides(values)
+        if self.autostart_path:
+            self.autostart_path.write_text(fingerprint(new), encoding="utf-8")
 
     def close_operation(self, symbol):
         def action(portfolio):
@@ -376,14 +502,17 @@ class Controller:
 
     def state(self, settings):
         portfolio = self.portfolio
+        running = self.running
+        if self.message_until and time.time() > self.message_until:
+            self.message, self.message_until = None, None
         return clean({
-            "running": self.running,
+            "running": running,
             "paused": bool(portfolio and portfolio.paused),
             "hasKeys": bool(settings.api_key and settings.api_secret),
             "settings": {key: getattr(settings, key) for key in EDITABLE},
             "maxSymbols": MAX_SYMBOLS,
             "timeframes": TIMEFRAMES,
-            "snapshots": self.snapshots,
+            "snapshots": self.snapshots if running else self.idle_snapshots(settings),
             "halted": self.halted,
             "message": self.message,
             "validation": self.validation,
@@ -440,9 +569,14 @@ def create_app(controller=None, token=None, settings_loader=load_settings):
     @app.post("/api/settings")
     def settings_update(values: dict = Body(...)):
         def action():
+            settings = settings_loader()
             if controller.running:
-                raise ValueError("Desligue o bot antes de mudar a configuração")
-            apply_overrides(settings_loader(), values)
+                controller.update_pairs(
+                    settings, str(values.get("symbols", settings.symbols)),
+                    values.get("pair_settings"), values,
+                )
+                return ok()
+            apply_overrides(settings, values)
             save_overrides(values)
             return ok()
         return guarded(action)
@@ -539,6 +673,21 @@ def create_app(controller=None, token=None, settings_loader=load_settings):
         controller.start_validation(settings_loader())
         return ok()
 
+    @app.post("/api/pairs")
+    def pairs_update(values: dict = Body(...)):
+        def action():
+            symbols = ",".join(str(item) for item in values.get("symbols", []))
+            pair_settings = json.dumps(values.get("pairSettings", {}))
+            settings = settings_loader()
+            if controller.running:
+                controller.update_pairs(settings, symbols, pair_settings)
+            else:
+                changes = {"symbols": symbols, "pair_settings": pair_settings}
+                apply_overrides(settings, changes)
+                save_overrides(changes)
+            return ok()
+        return guarded(action)
+
     @app.post("/api/operations")
     def operation_open(values: dict = Body(...)):
         def action():
@@ -558,8 +707,13 @@ def create_app(controller=None, token=None, settings_loader=load_settings):
         return guarded(lambda: controller.close_operation(str(values.get("symbol", ""))) or ok())
 
     @app.post("/api/bot/start")
-    def bot_start():
-        return guarded(lambda: controller.start(settings_loader()) or ok())
+    def bot_start(values: dict = Body(default={})):
+        def action():
+            settings = settings_loader()
+            reconnect = bool(values.get("reconnect")) and bool(controller.idle_snapshots(settings))
+            controller.start(settings, resumed=reconnect)
+            return ok()
+        return guarded(action)
 
     @app.post("/api/bot/pause")
     def bot_pause(values: dict = Body(...)):

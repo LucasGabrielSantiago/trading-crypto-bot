@@ -35,8 +35,9 @@ docker compose up -d --build
 Se criar o `.env` manualmente, troque `POSTGRES_PASSWORD` antes do primeiro início, usando só letras
 e números. Depois de criar o banco, mudar esse valor não altera a senha dele.
 
-O código de `bot/` e `main.py` fica ligado à pasta do projeto. Ao salvar um arquivo Python, o app
-reinicia sozinho em segundos. Alterações na interface aparecem ao atualizar a página. Só é preciso
+O código de `bot/` e `main.py` fica ligado à pasta do projeto, sem precisar de build. Ao salvar um
+arquivo Python, o app tenta reiniciar sozinho. No Windows, se a mudança não aparecer, rode
+`docker compose restart bot`. Alterações na interface aparecem ao atualizar a página com Ctrl + F5. Só é preciso
 `docker compose up -d --build` quando mudarem `Dockerfile` ou `requirements*.txt`. Depois de um
 reinício automático, o bot religa se a configuração não tiver mudado.
 
@@ -198,8 +199,13 @@ Escolha até 8 pares em USDT na interface ou em `SYMBOLS` no `.env`. O capital �
 e cada par tem limites e arquivo de dados próprios (`bot_BTCUSDT.db`, por exemplo). Se um par parar,
 os outros continuam.
 
-Hoje, todos os pares usam a mesma estratégia e o mesmo tempo gráfico. Pares sem USDT, como ETH/BTC,
-ainda não são aceitos.
+Com o bot ligado, você pode adicionar ou remover pares em **Estratégia e risco**. O capital é
+redividido na hora. Um par com operação aberta só pode ser removido depois de encerrada. Na grade, as
+ordens abertas do par removido são canceladas.
+
+Cada par pode ter sua própria estratégia e seu próprio tempo gráfico. Clique no par acima do gráfico
+e mude **Estratégia** e **Tempo gráfico**. Isso também funciona com o bot ligado, desde que o par não
+tenha posição aberta. Os outros ajustes, como capital e risco, valem para todos os pares. Pares sem USDT, como ETH/BTC, ainda não são aceitos.
 
 ## Gráfico
 
@@ -207,6 +213,15 @@ O gráfico usa a [Lightweight Charts](https://www.tradingview.com/lightweight-ch
 Ele mostra abertura, máxima, mínima, fechamento, variação e volume da vela sob o cursor, com zoom e
 arraste. Você pode ligar médias móveis, MME, Bollinger, RSI 14 e MACD. Em **Estratégia e risco**, os
 candles são da Binance real. No **Painel**, são da testnet, os mesmos usados pelo bot.
+
+A barra lateral tem linha de tendência, linha horizontal, retângulo, Fibonacci, texto, posição long,
+posição short, régua, ímã, travar, ocultar e apagar. Os desenhos ficam salvos no navegador, separados
+por par e tela. Eles só servem para análise: o bot não usa essas linhas para operar.
+
+Nas posições long e short, clique na entrada, no stop e no alvo. O desenho mostra as porcentagens e o
+risco/retorno. A posição short é só uma simulação visual, porque o bot opera apenas no spot.
+
+Para excluir um desenho, clique nele e depois no **×** vermelho, na lixeira ou na tecla Delete.
 
 ## Carteira e capital
 
@@ -227,7 +242,13 @@ pode usar um par fora da lista da estratégia, com uma operação por par e até
 operações continuam depois de reiniciar. Cada posição tem o botão **Encerrar**, que vende só aquela
 posição e mantém o bot ligado. Na grade, ele vende todos os níveis comprados daquele par.
 
+Com o bot desligado, o **Painel** continua mostrando as posições salvas. O botão **Religar bot** volta
+a acompanhá-las sem exigir um novo teste. Encerrar uma posição exige o bot ligado.
+
 ## Gestão de risco
+
+Os controles podem ser alterados com o bot ligado. O capital e os limites valem na hora para novas
+decisões. Alvo, stop e ordens já enviados à exchange não mudam.
 
 - **Tamanho:** por padrão, cada par arrisca 1% da sua parte do capital até o stop e usa no máximo 25%
   dela em uma posição.
@@ -299,8 +320,11 @@ cancela o OCO, vende a posição e encerra. Apague o arquivo antes de iniciar de
   e o alvo cabem no mesmo candle, conta o stop.
 - **Aprovação:** a configuração precisa de 20 operações, lucro e resultado melhor que segurar o ativo
   com a mesma exposição média nos dois períodos testados.
-- **Interface:** testa a configuração escolhida em cada par. O comando `validate` escolhe os
-  parâmetros nos primeiros 70% dos dados e confirma nos 30% finais.
+- **Interface:** testa a configuração escolhida em cada par, com a estratégia e o tempo gráfico dele.
+- **`python main.py validate`:** em `ranges`, escolhe os parâmetros nos primeiros 70% dos dados e
+  confirma nos 30% finais. Nas outras estratégias, testa os ajustes atuais nos dois períodos.
+- **Testes automatizados:** `pytest` cobre estratégias, ordens, recuperação depois de queda, interface
+  e histórico. Com `TEST_POSTGRES_URL` definido, também roda os testes no PostgreSQL.
 
 Ajustar várias vezes nos mesmos dados, ou escolher só os pares aprovados, deixa o resultado otimista.
 Uma aprovação não garante lucro futuro.
@@ -321,6 +345,22 @@ Uma aprovação não garante lucro futuro.
   evitar ordem duplicada.
 - Depois de parar pelo limite diário, um reinício no mesmo dia (UTC) para de novo. No dia seguinte,
   volta a operar.
+
+## Resolução de problemas
+
+| Situação | O que fazer |
+|---|---|
+| A página não abre em `127.0.0.1:8766` | Rode `docker compose ps -a` e `docker compose logs --tail=40 bot`. |
+| Erro de porta em uso ao subir | Outra cópia do bot ocupa a porta. Use só a versão Docker, na 8766, e feche o `Iniciar.bat`. |
+| A tela não mostra as mudanças | Atualize com **Ctrl + F5**. Se mudou Python, rode `docker compose restart bot`. |
+| Painel mostra **Desligado, com posições** | Clique em **Religar bot**. Alvo e stop na exchange continuam ativos enquanto isso. |
+| Um par aparece como parado | O motivo aparece no Painel. Corrija, desligue e ligue o bot de novo. |
+| O bot avisa que o OCO, a venda ou o saldo não batem | A testnet pode ter sido zerada. Confira a carteira e apague `bot_*.db*`. |
+| `trades` está vazia | Só operações fechadas entram no histórico. Posições abertas ficam no Painel. |
+| Mudou `requirements*.txt` ou `Dockerfile` | Rode `docker compose up -d --build`. |
+
+Para apagar só os arquivos de posição no Docker, use
+`docker compose exec bot sh -c 'rm -f /data/bot_*.db*'`. O histórico continua no PostgreSQL.
 
 ## Segurança
 

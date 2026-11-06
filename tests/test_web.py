@@ -114,11 +114,11 @@ def test_bot_starts_pauses_and_stops(web):
     client.post("/api/validate")
     wait_validation(client)
     assert client.post("/api/bot/start").status_code == 200
-    assert client.post("/api/settings", json={"lookback": 30}).status_code == 400
     for _ in range(100):
         if controller.portfolio and controller.snapshots:
             break
         time.sleep(0.02)
+    assert client.post("/api/settings", json={"lookback": 30}).status_code == 200
     assert client.post("/api/bot/pause", json={"paused": True}).status_code == 200
     assert client.get("/api/state").json()["paused"]
     client.post("/api/bot/stop")

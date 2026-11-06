@@ -46,15 +46,21 @@ class Bot:
         self.ex.load()
         for order in self.db.pending_orders():
             self._reconcile(order)
+        if self.position:
+            # Alvo ou stop podem ter executado com o bot desligado: confere antes do saldo.
+            self._sync_exchange_orders()
         position = self.position
         if position:
             base_total, _ = self.ex.balances()
             if base_total + 1e-12 < position["qty"]:
                 raise Halt(
-                    f"Saldo de {self.ex.base} ({base_total}) menor que a posição "
-                    f"registrada ({position['qty']}). Se a testnet foi zerada, apague o bot.db."
+                    f"Saldo de {self.ex.base} ({base_total}) menor que a posição registrada "
+                    f"({position['qty']}). Se a testnet foi zerada, apague os arquivos bot_*.db."
                 )
             self._restore_protection()
+
+    def _sync_exchange_orders(self):
+        self._sync_oco()
 
     def _restore_protection(self):
         if not self.position.get("oco_id"):
@@ -406,6 +412,9 @@ class Bot:
 class DcaBot(Bot):
     """Preço médio: até 3 compras, venda limitada no alvo e stop só se configurado."""
 
+    def _sync_exchange_orders(self):
+        self._sync_sell()
+
     def _restore_protection(self):
         self._ensure_sell()
 
@@ -509,7 +518,12 @@ class DcaBot(Bot):
         self._release_sell()
         if not self.position:
             return
-        self._submit("buy", amount, price, f"compra {step + 1} de 3")
+        try:
+            self._submit("buy", amount, price, f"compra {step + 1} de 3")
+        except Halt:
+            if self.position:  # A venda no alvo foi cancelada para a compra: precisa voltar.
+                self._ensure_sell()
+            raise
         self._ensure_sell()
 
     def step(self):
@@ -588,6 +602,7 @@ class Portfolio:
         self.history = history
         self.poll_seconds = poll_seconds
         self.active = []
+        self.waiting = []
         self.halted = {}
         self.paused = False
         self.commands = deque()
@@ -598,6 +613,16 @@ class Portfolio:
         future = Future()
         self.commands.append((action, future))
         return future
+
+    def remove_bot(self, symbol):
+        """Tira um par sem posição. Se houver grade, cancela as ordens antes."""
+        bot = self.bots.pop(symbol)
+        if getattr(bot, "grid", None):
+            bot._close("par removido")
+        for group in (self.active, self.waiting):
+            if bot in group:
+                group.remove(bot)
+        self.halted.pop(symbol, None)
 
     def add_bot(self, bot):
         bot.pause_entries = self.paused
@@ -626,14 +651,22 @@ class Portfolio:
             self.active.remove(bot)
         log.error("%s parado: %s", bot.s.symbol, reason)
 
-    def startup(self):
-        for bot in self.bots.values():
+    def startup(self, bots=None):
+        for bot in bots if bots is not None else list(self.bots.values()):
             try:
                 bot.startup()
                 self.active.append(bot)
+                if bot in self.waiting:
+                    self.waiting.remove(bot)
             except Halt as reason:
                 self._halt(bot, reason)
-            except ccxt.BaseError as error:
+            except ccxt.NetworkError as error:
+                # Sem internet ao iniciar: tenta de novo no próximo ciclo.
+                bot.status = "sem conexão, tentando de novo"
+                if bot not in self.waiting:
+                    self.waiting.append(bot)
+                log.warning("%s: falha de rede ao iniciar: %s", bot.s.symbol, error)
+            except Exception as error:
                 self._halt(bot, f"Erro ao iniciar: {error}")
 
     def sync_history(self):
@@ -666,12 +699,17 @@ class Portfolio:
                 self._halt(bot, f"Erro da exchange: {error}")
             except Halt as reason:
                 self._halt(bot, reason)
+            except Exception as error:  # Um erro inesperado para só este par.
+                log.exception("%s: erro inesperado", bot.s.symbol)
+                self._halt(bot, f"Erro inesperado: {error}")
 
     def run(self, on_update=None, should_continue=None, wait=time.sleep):
         self.startup()
         self.sync_history()
-        while self.active and (should_continue is None or should_continue()):
+        while (self.active or self.waiting) and (should_continue is None or should_continue()):
             self.run_commands()
+            if self.waiting:
+                self.startup(list(self.waiting))
             self.step()
             self.sync_history()
             self.remove_finished_manual()
@@ -680,7 +718,7 @@ class Portfolio:
                     on_update(self.snapshots())
                 except Exception:  # Erro de tela não pode interromper a proteção das posições.
                     log.exception("Falha ao atualizar a tela")
-            if self.active:
+            if self.active or self.waiting:
                 wait(self.poll_seconds)
         while self.commands:
             _, future = self.commands.popleft()

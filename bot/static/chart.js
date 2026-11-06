@@ -1,7 +1,7 @@
 /* Gráfico de candles com indicadores, baseado na Lightweight Charts da TradingView. */
 (() => {
   const LC = window.LightweightCharts;
-  const GREEN = '#22C55E', RED = '#EF4444';
+  const GREEN = '#089981', RED = '#F23645';
   const OVERLAYS = [
     { id: 'sma20', label: 'MM 20', keys: ['sma20'], color: '#7CC0FF', on: true },
     { id: 'sma50', label: 'MM 50', keys: ['sma50'], color: '#FFB454', on: true },
@@ -76,7 +76,12 @@
       this.surface = document.createElement('div');
       this.surface.className = 'chart-surface';
       this.frame.append(this.legend, this.surface);
-      this.host.append(tools, this.frame);
+      const layout = document.createElement('div');
+      layout.className = 'chart-layout';
+      this.drawings = new window.ChartDrawings(this);
+      layout.append(this.drawings.toolbar, this.frame);
+      this.frame.appendChild(this.drawings.layer);
+      this.host.append(tools, layout);
     }
 
     build() {
@@ -84,11 +89,11 @@
       this.surface.style.height = `${450 + panes * 170}px`;
       this.chart = LC.createChart(this.surface, {
         autoSize: true,
-        layout: { background: { type: 'solid', color: '#151C24' }, textColor: '#A9B6C3', fontFamily: 'inherit', panes: { separatorColor: '#3B4A5A' } },
-        grid: { vertLines: { color: '#1F2933' }, horzLines: { color: '#1F2933' } },
+        layout: { background: { type: 'solid', color: '#131722' }, textColor: '#B2B5BE', fontFamily: 'inherit', fontSize: 11, panes: { separatorColor: '#2A2E39' } },
+        grid: { vertLines: { color: '#1C2030' }, horzLines: { color: '#1C2030' } },
         crosshair: { mode: LC.CrosshairMode.Normal },
-        rightPriceScale: { borderColor: '#3B4A5A' },
-        timeScale: { borderColor: '#3B4A5A', timeVisible: true, secondsVisible: false, rightOffset: 6 },
+        rightPriceScale: { borderColor: '#2A2E39' },
+        timeScale: { borderColor: '#2A2E39', timeVisible: true, secondsVisible: false, rightOffset: 6 },
         localization: { locale: 'pt-BR' },
       });
       this.candle = this.chart.addSeries(LC.CandlestickSeries, {
@@ -122,6 +127,8 @@
       }
       this.chart.panes().forEach((item, index) => { item.setStretchFactor(index ? 1 : 3); });
       this.chart.subscribeCrosshairMove((param) => this.showLegend(param.time));
+      this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => this.drawings.schedule());
+      this.chart.timeScale().subscribeSizeChange(() => this.drawings.schedule());
     }
 
     toggle(id, button) {
@@ -154,10 +161,10 @@
       this.chart.applyOptions({ localization: { locale: 'pt-BR', priceFormatter: (price) => number(price, Math.abs(price) >= 1000 ? Math.min(precision, 2) : precision) } });
       this.candle.applyOptions({ priceFormat: format });
       this.candle.setData(data.candles.map((c, index) => ({ time: this.times[index], open: c.open, high: c.high, low: c.low, close: c.close })));
-      this.volume.setData(data.candles.map((c, index) => ({ time: this.times[index], value: c.volume, color: c.close >= c.open ? '#14532D' : '#7F1D1D' })));
+      this.volume.setData(data.candles.map((c, index) => ({ time: this.times[index], value: c.volume, color: c.close >= c.open ? 'rgba(8,153,129,.45)' : 'rgba(242,54,69,.45)' })));
       Object.entries(this.lines).forEach(([key, series]) => {
         if (key === 'macdHistogram') {
-          series.setData(this.series(key).map((p) => ({ ...p, color: p.value >= 0 ? '#14532D' : '#7F1D1D' })));
+          series.setData(this.series(key).map((p) => ({ ...p, color: p.value >= 0 ? 'rgba(8,153,129,.6)' : 'rgba(242,54,69,.6)' })));
         } else {
           series.setData(this.series(key));
         }
@@ -169,6 +176,8 @@
       });
       this.markers.setMarkers(buys);
       this.showLegend();
+      this.drawings.setSymbol(data.symbol);
+      this.drawings.schedule();
     }
 
     update(data) {
@@ -204,11 +213,11 @@
       let index = time === undefined ? -1 : this.times.indexOf(time);
       if (index < 0) index = this.data.candles.length - 1;
       const c = this.data.candles[index], digits = this.digits, change = (c.close / c.open - 1) * 100;
+      const tone = change >= 0 ? 'up' : 'down';
       const pieces = [
         ['strong', this.data.title || ''],
-        ['span', `A ${number(c.open, digits)}`], ['span', `M ${number(c.high, digits)}`],
-        ['span', `Mi ${number(c.low, digits)}`], ['span', `F ${number(c.close, digits)}`],
-        [change >= 0 ? 'up' : 'down', `${change >= 0 ? '+' : ''}${number(change, 2)}%`],
+        ...[['A', c.open], ['M', c.high], ['Mi', c.low], ['F', c.close]].map(([name, value]) => [tone, name, number(value, digits)]),
+        [tone, '', `${change >= 0 ? '+' : ''}${number(c.close - c.open, digits)} (${change >= 0 ? '+' : ''}${number(change, 2)}%)`],
         ['span', `Vol ${compact(c.volume)}`],
       ];
       const indicators = this.data.indicators;
@@ -218,12 +227,15 @@
       });
       if (this.choices.rsi && indicators.rsi[index] !== null) pieces.push(['span', `RSI ${number(indicators.rsi[index], 1)}`]);
       if (this.choices.macd && indicators.macd[index] !== null) pieces.push(['span', `MACD ${number(indicators.macd[index], digits)}`]);
-      this.legend.replaceChildren(...pieces.map(([kind, text]) => {
+      this.legend.replaceChildren(...pieces.map(([kind, first, second]) => {
         const span = document.createElement('span');
         if (kind === 'strong') span.style.fontWeight = '600';
-        if (kind === 'up') span.style.color = GREEN;
-        if (kind === 'down') span.style.color = RED;
-        span.textContent = text;
+        if (second === undefined) { span.textContent = first; return span; }
+        if (first) span.append(`${first} `);
+        const value = document.createElement('span');
+        value.style.color = kind === 'up' ? '#22AB94' : '#F7525F';
+        value.textContent = second;
+        span.appendChild(value);
         return span;
       }));
     }
