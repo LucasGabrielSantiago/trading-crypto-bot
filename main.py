@@ -8,7 +8,7 @@ import pandas as pd
 from bot.backtest import run_backtest, synthetic_candles, validate
 from bot.config import load_settings
 from bot.exchange import Exchange, create_testnet_client, fetch_public_history
-from bot.runner import Bot, Portfolio
+from bot.runner import Portfolio, make_bot
 from bot.storage import Storage
 from bot.web import connect_history
 
@@ -76,7 +76,7 @@ def build_portfolio(settings):
     bots = []
     for symbol in settings.symbol_list:
         pair = settings.for_symbol(symbol)
-        bots.append(Bot(pair, connected_exchange(pair), Storage(pair.db_path)))
+        bots.append(make_bot(pair, connected_exchange(pair), Storage(pair.db_path)))
     return Portfolio(bots, settings.poll_seconds, connect_history())
 
 

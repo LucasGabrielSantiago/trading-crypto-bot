@@ -90,7 +90,9 @@ def test_preview_is_valid_json_without_nan(web):
     client, _ = web
     response = client.post("/api/preview", json={"strategy": "ranges"})
     json.loads(response.text, parse_constant=lambda _: pytest.fail("NaN"))
-    assert len(response.json()["candles"]) == 120
+    data = response.json()
+    assert len(data["candles"]) == 500 and len(data["indicators"]["rsi"]) == 500
+    assert data["candles"][0]["time"] < 10_000_000_000 and "volume" in data["candles"][0]
 
 
 def test_start_requires_current_test(web):
@@ -212,3 +214,23 @@ def test_portfolio_ends_without_waiting_when_all_pairs_halt(tmp_path):
     waits = []
     Portfolio([bot], 30).run(wait=waits.append)
     assert waits == []
+
+
+def test_docker_public_port_is_allowed(web, monkeypatch):
+    client, controller = web
+    monkeypatch.setenv("PUBLIC_PORT", "8766")
+    app = create_app(controller, TOKEN, config.load_settings)
+    docker = TestClient(app, headers={"X-Bot-Token": TOKEN})
+    assert docker.get("/api/state", headers={"host": "127.0.0.1:8766"}).status_code == 200
+    assert docker.get("/api/state", headers={"host": "127.0.0.1:9999"}).status_code == 403
+
+
+def test_wallet_lists_assets_with_values(web):
+    client, _ = web
+    assert client.get("/api/wallet").status_code == 400
+    client.post("/api/keys", json={"apiKey": "chave", "apiSecret": "segredo"})
+    wallet = client.get("/api/wallet").json()
+    assert [row["asset"] for row in wallet["assets"]] == ["USDT", "BTC", "XYZ"]
+    assert wallet["total"] == pytest.approx(10100) and wallet["usdtFree"] == 10000
+    assert wallet["unpriced"] == 1 and wallet["assets"][1]["locked"] == 0.25
+    assert wallet["assets"][2]["value"] is None and "segredo" not in json.dumps(wallet)

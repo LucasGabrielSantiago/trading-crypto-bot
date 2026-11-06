@@ -72,7 +72,7 @@ if (-not (Test-Path ".env")) {
 
 # 4. Contêineres
 Write-Host "Preparando o bot..."
-docker compose up -d --build
+docker compose up -d
 if ($LASTEXITCODE -ne 0) {
     docker compose ps -a
     Fail "Não foi possível subir os contêineres. Se a porta 8766 estiver em uso, feche o programa que a ocupa."

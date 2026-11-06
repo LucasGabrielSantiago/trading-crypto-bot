@@ -68,6 +68,26 @@ class Exchange:
         quote_free = float((data.get(self.quote) or {}).get("free") or 0)
         return base_total, quote_free
 
+    def wallet(self):
+        """Lista os saldos da conta de testnet com o valor estimado em USDT."""
+        balance = self.client.fetch_balance()
+        tickers = self.client.fetch_tickers()
+        rows = []
+        for asset, total in (balance.get("total") or {}).items():
+            total = float(total or 0)
+            if total <= 0:
+                continue
+            price = 1.0 if asset == "USDT" else (tickers.get(f"{asset}/USDT") or {}).get("last")
+            price = float(price) if price else None
+            rows.append({
+                "asset": asset, "total": total,
+                "free": float((balance.get("free") or {}).get(asset) or 0),
+                "locked": float((balance.get("used") or {}).get(asset) or 0),
+                "price": price, "value": total * price if price is not None else None,
+            })
+        rows.sort(key=lambda row: (row["value"] is None, -(row["value"] or 0)))
+        return rows
+
     def normalize_amount(self, amount):
         return float(self.client.amount_to_precision(self.symbol, amount))
 
@@ -92,6 +112,21 @@ class Exchange:
             )
         except ccxt.OrderNotFound:
             return None
+
+    def limit_order(self, side, amount, price, client_id):
+        price = self.client.price_to_precision(self.symbol, price)
+        return self.client.create_order(
+            self.symbol, "limit", side, amount, price, {"newClientOrderId": client_id}
+        )
+
+    def limit_sell(self, amount, price, client_id):
+        return self.limit_order("sell", amount, price, client_id)
+
+    def cancel_order(self, client_id):
+        try:
+            self.client.cancel_order(None, self.symbol, {"origClientOrderId": client_id})
+        except ccxt.InvalidOrder:
+            pass  # A ordem já terminou; quem chamou confere o que foi executado.
 
     def place_oco(self, list_id, amount, target, stop, stop_limit):
         """Venda com alvo acima do preço e stop abaixo. Quando uma executa, a outra cancela."""
@@ -123,6 +158,15 @@ class Exchange:
             })
         except ccxt.InvalidOrder:
             pass  # A lista já terminou; quem chamou confere o que foi executado.
+
+
+def fetch_testnet_history(symbol, timeframe, candles):
+    """Lê os candles públicos da testnet, sem chave. Usado no gráfico do painel."""
+    client = ccxt.binance({"enableRateLimit": True, "options": {"defaultType": "spot"}})
+    client.set_sandbox_mode(True)
+    assert_testnet(client)
+    rows = client.fetch_ohlcv(symbol, timeframe, limit=min(candles, 1000))
+    return pd.DataFrame(rows, columns=COLUMNS)
 
 
 def fetch_public_history(symbol, timeframe, candles):

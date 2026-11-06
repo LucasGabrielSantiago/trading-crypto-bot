@@ -10,10 +10,12 @@ ENV_PATH = Path(os.environ.get("ENV_FILE_PATH", ".env"))
 MAX_SYMBOLS = 8
 EDITABLE = (
     "symbols", "timeframe", "strategy", "lookback", "zone_pct", "min_reward_risk",
+    "catastrophe_stop_pct", "grid_levels",
     "fast_sma", "slow_sma", "capital_usdt", "risk_per_trade", "stop_loss_pct",
     "max_position_pct", "max_daily_loss_pct",
 )
 TIMEFRAMES = ("1h", "4h", "1d")
+STRATEGIES = ("ranges", "sma", "dca", "breakout", "reversion", "momentum", "grid")
 SYMBOL_PATTERN = re.compile(r"[A-Z0-9]{2,20}/USDT")
 
 
@@ -31,6 +33,9 @@ class Settings:
     min_reward_risk: float = 1.5
     min_range_pct: float = 0.04
     stop_limit_buffer_pct: float = 0.005
+    catastrophe_stop_pct: float = 0.0
+    grid_levels: int = 6
+    dca_floor_pct: float = 0.05
     fast_sma: int = 20
     slow_sma: int = 50
     capital_usdt: float = 1000.0
@@ -43,8 +48,12 @@ class Settings:
     kill_file: str = "STOP"
 
     def __post_init__(self):
-        if self.strategy not in ("ranges", "sma"):
-            raise ValueError("STRATEGY precisa ser ranges ou sma")
+        if self.strategy not in STRATEGIES:
+            raise ValueError(f"STRATEGY precisa ser uma destas: {', '.join(STRATEGIES)}")
+        if not 2 <= self.grid_levels <= 20:
+            raise ValueError("A grade precisa ter de 2 a 20 níveis")
+        if not 0 <= self.catastrophe_stop_pct < 1:
+            raise ValueError("Stop de catástrofe inválido")
         names = self.symbol_list
         if not 1 <= len(names) <= MAX_SYMBOLS:
             raise ValueError(f"Escolha de 1 a {MAX_SYMBOLS} pares")
@@ -80,7 +89,12 @@ class Settings:
     @property
     def warmup(self) -> int:
         """Candles fechados necessários para gerar um sinal."""
-        return self.slow_sma + 1 if self.strategy == "sma" else self.lookback + 2
+        return {
+            "sma": self.slow_sma + 1,
+            "breakout": max(self.lookback + 2, 22),
+            "reversion": 60,
+            "momentum": 230,
+        }.get(self.strategy, self.lookback + 2)
 
 
 def load_settings() -> Settings:
@@ -101,6 +115,9 @@ def load_settings() -> Settings:
         min_reward_risk=float(env("MIN_REWARD_RISK", "1.5")),
         min_range_pct=float(env("MIN_RANGE_PCT", "0.04")),
         stop_limit_buffer_pct=float(env("STOP_LIMIT_BUFFER_PCT", "0.005")),
+        catastrophe_stop_pct=float(env("CATASTROPHE_STOP_PCT", "0")),
+        dca_floor_pct=float(env("DCA_FLOOR_PCT", "0.05")),
+        grid_levels=int(env("GRID_LEVELS", "6")),
         fast_sma=int(env("FAST_SMA", "20")),
         slow_sma=int(env("SLOW_SMA", "50")),
         capital_usdt=float(env("CAPITAL_USDT", "1000")),

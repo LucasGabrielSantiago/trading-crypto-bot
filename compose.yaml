@@ -21,6 +21,8 @@ services:
   bot:
     build: .
     restart: unless-stopped
+    # Usa o código da pasta e reinicia o app quando um arquivo Python mudar.
+    command: ["watchfiles", "--filter", "python", "python main.py ui", "/app"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -30,6 +32,7 @@ services:
     environment:
       BIND_HOST: 0.0.0.0
       OPEN_BROWSER: "0"
+      WATCHFILES_FORCE_POLLING: "true"
       PUBLIC_PORT: "8766"
       DATABASE_URL: postgresql+psycopg://bot:${POSTGRES_PASSWORD:-troque_esta_senha}@postgres:5432/trading
       DB_PATH: /data/bot.db
@@ -38,6 +41,8 @@ services:
       ENV_FILE_PATH: /data/.env
     volumes:
       - bot_data:/data
+      - ./bot:/app/bot:ro
+      - ./main.py:/app/main.py:ro
     ports:
       - "127.0.0.1:8766:8765"
 

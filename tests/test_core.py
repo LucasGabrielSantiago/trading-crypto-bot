@@ -30,10 +30,22 @@ class FakeClient:
         self.fail_next = None
         self.fail_oco = None
         self.oco = None
+        self.limits = []
         self.stop_fills = True
+
+    @property
+    def limit_order(self):
+        return self.limits[-1] if self.limits else None
 
     def price_to_precision(self, symbol, price):
         return f"{float(price):.2f}"
+
+    def cancel_order(self, id_, symbol, params):
+        order = self.by_client_id.get(params["origClientOrderId"])
+        if order is None or order["status"] != "open":
+            raise ccxt.OrderNotFound("not found")
+        order["status"] = "canceled"
+        self.limits.remove(order)
 
     def private_post_orderlist_oco(self, params):
         pending_error, self.fail_oco = self.fail_oco, None
@@ -66,6 +78,14 @@ class FakeClient:
 
     def trigger(self):
         """Executa na exchange a perna do OCO alcançada pelo preço."""
+        for limit in list(self.limits):
+            selling = limit["side"] == "sell"
+            if (selling and self.price >= limit["price"]) or (not selling and self.price <= limit["price"]):
+                cost = limit["amount"] * limit["price"]
+                self.btc += -limit["amount"] if selling else limit["amount"]
+                self.usdt += cost if selling else -cost
+                limit.update(status="closed", filled=limit["amount"], average=limit["price"], cost=cost)
+                self.limits.remove(limit)
         oco = self.oco
         if not oco or oco["status"] == "ALL_DONE":
             return
@@ -104,7 +124,15 @@ class FakeClient:
         return {"last": self.price}
 
     def fetch_balance(self):
-        return {"BTC": {"total": self.btc}, "USDT": {"free": self.usdt}}
+        return {
+            "BTC": {"total": self.btc}, "USDT": {"free": self.usdt},
+            "total": {"BTC": self.btc, "USDT": self.usdt, "XYZ": 5.0, "ZERO": 0.0},
+            "free": {"BTC": self.btc - 0.25, "USDT": self.usdt, "XYZ": 5.0},
+            "used": {"BTC": 0.25, "USDT": 0.0, "XYZ": 0.0},
+        }
+
+    def fetch_tickers(self):
+        return {"BTC/USDT": {"last": self.price}}
 
     def create_order(self, symbol, type_, side, amount, price, params):
         if self.fail_next:
@@ -112,6 +140,12 @@ class FakeClient:
             if isinstance(error, ccxt.NetworkError):
                 self._fill(side, amount, params["newClientOrderId"])
             raise error
+        if type_ == "limit":
+            order = {"status": "open", "filled": 0, "amount": float(amount), "price": float(price),
+                     "side": side}
+            self.by_client_id[params["newClientOrderId"]] = order
+            self.limits.append(order)
+            return order
         return self._fill(side, amount, params["newClientOrderId"])
 
     def _fill(self, side, amount, client_id):
@@ -349,6 +383,8 @@ def test_real_ccxt_requests_go_to_testnet():
     exchange.place_oco("mvp-oco-1", 0.001, 80000, 70000, 69000)
     exchange.oco_status("mvp-oco-1")
     exchange.cancel_oco("mvp-oco-1")
+    exchange.limit_sell(0.001, 80000, "mvp-limit-1")
+    exchange.cancel_order("mvp-limit-1")
 
     assert order["filled"] == 0.001 and found["status"] == "closed"
     joined = " ".join(url + body for url, body in calls)
@@ -357,6 +393,8 @@ def test_real_ccxt_requests_go_to_testnet():
     assert "origClientOrderId=mvp-buy-1" in joined
     assert "/api/v3/orderList/oco" in joined and "aboveType=LIMIT_MAKER" in joined
     assert "belowType=STOP_LOSS_LIMIT" in joined and "belowStopPrice=70000" in joined
+    assert "type=LIMIT" in joined and "newClientOrderId=mvp-limit-1" in joined
+    assert "origClientOrderId=mvp-limit-1" in joined
     assert "listClientOrderId=mvp-oco-1" in joined and "origClientOrderId=mvp-oco-1" in joined
 
 
@@ -429,11 +467,12 @@ def test_cancelled_oco_without_fill_is_replaced(h):
 
 
 def range_frame():
-    highs = [110.0] * 12
-    lows = [90.0] * 12
+    highs = [120.0] * 12
+    lows = [80.0] * 12
     opens = [100.0] * 12
     closes = [100.0] * 12
-    opens[-1], closes[-1], lows[-1] = 91.0, 93.0, 90.5
+    closes[2], closes[3] = 110.0, 90.0
+    opens[-1], closes[-1] = 91.0, 93.0
     return pd.DataFrame({
         "timestamp": np.arange(12) * HOUR, "open": opens, "high": highs, "low": lows,
         "close": closes, "volume": 1.0,

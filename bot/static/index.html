@@ -32,13 +32,18 @@ p{margin:0}.muted{color:var(--muted)}.small{font-size:13px}
 .form{display:flex;flex-direction:column;gap:16px}
 label{display:block;font-size:14px}.row{display:flex;justify-content:space-between;gap:12px}
 input[type=range]{width:100%;min-height:36px;accent-color:var(--blue)}
-input[type=text],input[type=password],select{width:100%;min-height:44px;margin-top:6px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--raised);color:var(--text);font:15px inherit;font-family:inherit}
+input[type=text],input[type=password],input[type=number],select{width:100%;min-height:44px;margin-top:6px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--raised);color:var(--text);font:15px inherit;font-family:inherit}
 .box{overflow-x:auto}table{width:100%;min-width:480px;border-collapse:collapse;font-size:14px;text-align:left}
 th{color:var(--muted);font-weight:500}th,td{padding:8px}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--raised);color:var(--text);font:500 14px inherit;font-family:inherit;cursor:pointer}
 .chip[aria-pressed=true]{background:#263442;border-color:var(--blue)}
 .tip{position:absolute;pointer-events:none;background:var(--raised);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:13px;white-space:nowrap;transform:translate(-50%,-110%)}
+.chart-tools{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.chart-chip{min-height:36px;padding:0 10px;font-size:13px}
+.chart-frame{position:relative;min-width:0}
+.chart-surface{width:100%;min-height:440px}
+.chart-legend{position:absolute;z-index:3;top:6px;left:8px;right:72px;display:flex;flex-wrap:wrap;gap:4px 10px;font-size:13px;pointer-events:none;color:var(--text);text-shadow:0 0 3px #151C24}
 .notice{padding:14px 16px;border-radius:8px;background:var(--raised)}.notice.warn{background:var(--warn-bg);color:var(--warn)}
 svg{display:block;width:100%;height:auto}
 [hidden]{display:none!important}
@@ -52,6 +57,7 @@ ol{margin:0;padding-left:20px}
   <button class="tab" data-view="connect" id="connectTab">Conectar</button>
   <button class="tab" data-view="studio">Estratégia e risco</button>
   <button class="tab" data-view="panel">Painel</button>
+  <button class="tab" data-view="wallet">Carteira</button>
   <button class="tab" data-view="history">Histórico</button>
 </nav>
 <main>
@@ -77,32 +83,38 @@ ol{margin:0;padding-left:20px}
     <div class="split">
       <div class="side card form">
         <div class="form" style="gap:8px">
-          <label for="pairSearch">Pares para operar (até <span id="maxPairs">8</span>)</label>
+          <label for="pairSearch">Pares para operar (até <span id="maxPairs">8</span> ao mesmo tempo)</label>
           <div id="selectedPairs" class="chips"></div>
           <input id="pairSearch" type="text" placeholder="Buscar: ETH, SOL..." autocomplete="off" spellcheck="false">
-          <div id="pairResults" class="chips"></div>
-          <p class="muted small">Só pares em USDT. O capital é dividido igualmente entre eles.</p>
+          <p id="pairCount" class="muted small"></p>
+          <div id="pairResults" class="chips" style="max-height:176px;overflow-y:auto"></div>
+          <p class="muted small">Pares em USDT da testnet. O capital para trading é dividido igualmente entre os pares escolhidos.</p>
         </div>
-        <label>Estratégia<select id="strategy"><option value="ranges">Máximas e mínimas</option><option value="sma">Médias móveis</option></select></label>
+        <label>Estratégia<select id="strategy"><option value="ranges">Máximas e mínimas</option><option value="sma">Médias móveis</option><option value="dca">Preço médio (3 compras)</option><option value="breakout">Rompimento</option><option value="reversion">Reversão à média</option><option value="momentum">Momentum</option><option value="grid">Grid</option></select></label>
         <label>Tempo gráfico<select id="timeframe"><option value="1h">1 hora</option><option value="4h">4 horas</option><option value="1d">1 dia</option></select></label>
-        <div id="rangeFields" class="form">
-          <label><span class="row"><span>Candles da região</span><b id="lookbackOut"></b></span><input id="lookback" type="range" min="20" max="120" step="10"></label>
-          <label><span class="row"><span>Zona de compra</span><b id="zoneOut"></b></span><input id="zone" type="range" min="5" max="30" step="5"></label>
-          <label><span class="row"><span>Ganho mínimo por risco</span><b id="rrOut"></b></span><input id="rr" type="range" min="1" max="3" step="0.5"></label>
+        <p id="strategyHelp" class="muted small"></p>
+        <div class="form">
+          <label data-strategies="ranges dca breakout grid"><span class="row"><span>Candles da região</span><b id="lookbackOut"></b></span><input id="lookback" type="range" min="20" max="120" step="10"></label>
+          <label data-strategies="ranges"><span class="row"><span>Zona de compra</span><b id="zoneOut"></b></span><input id="zone" type="range" min="5" max="30" step="5"></label>
+          <label data-strategies="ranges breakout momentum"><span class="row"><span>Ganho mínimo por risco</span><b id="rrOut"></b></span><input id="rr" type="range" min="1" max="3" step="0.5"></label>
+          <label data-strategies="grid"><span class="row"><span>Níveis da grade</span><b id="gridOut"></b></span><input id="grid" type="range" min="3" max="12" step="1"></label>
         </div>
-        <div id="smaFields" class="form">
-          <label><span class="row"><span>Média curta</span><b id="fastOut"></b></span><input id="fast" type="range" min="5" max="50" step="5"></label>
-          <label><span class="row"><span>Média longa</span><b id="slowOut"></b></span><input id="slow" type="range" min="20" max="200" step="10"></label>
-          <label><span class="row"><span>Stop</span><b id="stopOut"></b></span><input id="stop" type="range" min="1" max="10" step="0.5"></label>
+        <div class="form">
+          <label data-strategies="sma"><span class="row"><span>Média curta</span><b id="fastOut"></b></span><input id="fast" type="range" min="5" max="50" step="5"></label>
+          <label data-strategies="sma"><span class="row"><span>Média longa</span><b id="slowOut"></b></span><input id="slow" type="range" min="20" max="200" step="10"></label>
+          <label data-strategies="sma breakout reversion momentum"><span class="row"><span>Stop</span><b id="stopOut"></b></span><input id="stop" type="range" min="1" max="10" step="0.5"></label>
         </div>
         <h2 style="margin:8px 0 0">Gestão de risco</h2>
-        <label><span class="row"><span>Capital do bot</span><b id="capitalOut"></b></span><input id="capital" type="range" min="100" max="5000" step="100"></label>
+        <label><span class="row"><span>Capital para trading</span><b id="capitalOut"></b></span><input id="capital" type="range" min="100" max="10000" step="100"></label>
+        <label id="catastropheField"><span class="row"><span>Stop de catástrofe</span><b id="catastropheOut"></b></span><input id="catastrophe" type="range" min="0" max="60" step="5"></label>
+        <div id="riskFields" class="form">
         <label><span class="row"><span>Risco por operação</span><b id="riskOut"></b></span><input id="risk" type="range" min="0.25" max="2" step="0.25"></label>
         <label><span class="row"><span>Posição máxima</span><b id="posOut"></b></span><input id="pos" type="range" min="5" max="100" step="5"></label>
         <label><span class="row"><span>Parar após perder no dia</span><b id="dayOut"></b></span><input id="day" type="range" min="1" max="5" step="0.5"></label>
+        </div>
       </div>
       <div class="grow form">
-        <div class="card"><h2>Candles reais recentes</h2><div id="chartPairs" class="chips" style="margin-bottom:12px"></div><div id="previewChart"><p class="muted">Carregando gráfico...</p></div><p class="muted small" style="margin-top:8px">Os triângulos azuis mostram onde esta configuração compraria.</p></div>
+        <div class="card"><h2>Candles reais recentes</h2><div id="chartPairs" class="chips" style="margin-bottom:12px"></div><div id="previewChart"><p class="muted">Carregando gráfico...</p></div><p class="muted small" style="margin-top:8px">As setas azuis com "C" mostram onde esta configuração compraria. Arraste para mover e use a roda do mouse para dar zoom.</p></div>
         <div class="notice" id="summary"></div>
         <div class="card">
           <div class="top"><h2 style="margin:0">Resultado do teste</h2><button id="test" class="btn primary">Testar estratégia</button></div>
@@ -126,16 +138,46 @@ ol{margin:0;padding-left:20px}
     <div id="panelPairs" class="chips"></div>
     <div class="kpis">
       <div class="card kpi"><span class="muted small">Situação</span><strong id="kStatus">Desligado</strong></div>
-      <div class="card kpi"><span class="muted small">Capital total</span><strong id="kEquity">-</strong></div>
-      <div class="card kpi"><span class="muted small">Resultado total</span><strong id="kResult">-</strong></div>
+      <div class="card kpi"><span class="muted small">Capital para trading</span><strong id="kEquity">-</strong></div>
+      <div class="card kpi"><span class="muted small">Em trading</span><strong id="kTrading">-</strong><span class="muted small" id="kInvested"></span></div>
+      <div class="card kpi"><span class="muted small">Disponível no bot</span><strong id="kAvailable">-</strong></div>
+      <div class="card kpi"><span class="muted small">Resultado total</span><strong id="kResult">-</strong><span class="muted small" id="kOpen"></span></div>
+      <div class="card kpi"><span class="muted small">Carteira total</span><strong id="kAccount">-</strong><span class="muted small" id="kAccountFree"></span></div>
       <div class="card kpi"><span class="muted small" id="kPriceLabel">Preço</span><strong id="kPrice">-</strong></div>
     </div>
     <div class="split">
-      <div class="grow card"><h2>Preço, regiões e proteção</h2><div id="liveChart"><p class="muted">O gráfico aparece com o bot ligado.</p></div></div>
+      <div class="grow card" style="flex-basis:100%"><h2>Preço, regiões e proteção</h2><div id="liveChart"><p class="muted">O gráfico aparece com o bot ligado.</p></div><p id="liveNote" class="muted small" style="margin-top:8px">Candles da testnet, os mesmos usados pelo bot.</p></div>
       <div class="side card"><h2>Posições abertas</h2><div id="position"><p class="muted">Nenhuma posição aberta.</p></div></div>
     </div>
     <div id="halted" class="notice warn" hidden></div>
+    <div class="card">
+      <h2>Nova operação</h2>
+      <p class="muted small" style="margin-bottom:12px">Compra agora a mercado e deixa alvo e stop na exchange. Você pode abrir uma operação por par, até 8 pares.</p>
+      <form id="newOperation" class="actions" style="align-items:flex-end">
+        <label style="flex:1 1 160px">Par<input id="opSymbol" type="text" list="pairOptions" placeholder="SOL/USDT" autocomplete="off" required></label>
+        <datalist id="pairOptions"></datalist>
+        <label style="flex:1 1 120px">Valor (USDT)<input id="opAmount" type="number" min="10" step="1" value="50" required></label>
+        <label style="flex:1 1 100px">Alvo (%)<input id="opTarget" type="number" min="0.1" step="0.1" value="6" required></label>
+        <label style="flex:1 1 100px">Stop (%)<input id="opStop" type="number" min="0.1" max="99" step="0.1" value="3" required></label>
+        <button id="opOpen" class="btn primary" type="submit">Abrir operação</button>
+      </form>
+    </div>
+    <div class="card"><h2>Capital por par</h2><div class="box"><table><thead><tr><th>Par</th><th>Situação</th><th>Capital do par</th><th>Em trading</th><th>Disponível</th><th>Resultado</th></tr></thead><tbody id="panelCapital"></tbody></table></div></div>
     <div class="card"><h2>Últimas ordens</h2><div class="box"><table><thead><tr><th>Par</th><th>Lado</th><th>Quantidade</th><th>Preço</th><th>Status</th><th>Motivo</th></tr></thead><tbody id="orders"></tbody></table></div></div>
+  </section>
+
+  <section id="wallet" class="form" hidden>
+    <div class="top"><div><h1>Carteira</h1><p class="muted">Saldos fictícios da sua conta de testnet.</p></div><span class="badge">TESTNET</span></div>
+    <p id="wEmpty" class="notice" hidden></p>
+    <div id="wBody" class="form">
+      <div class="kpis">
+        <div class="card kpi"><span class="muted small">Carteira total</span><strong id="wTotal">-</strong></div>
+        <div class="card kpi"><span class="muted small">USDT livre</span><strong id="wUsdt">-</strong></div>
+        <div class="card kpi"><span class="muted small">Capital para trading</span><strong id="wTrading">-</strong></div>
+        <div class="card kpi"><span class="muted small">Ativos na carteira</span><strong id="wCount">-</strong></div>
+      </div>
+      <div class="card"><h2>Capital em cada ativo</h2><div class="box" style="max-height:560px;overflow-y:auto"><table><thead><tr><th>Ativo</th><th>Quantidade</th><th>Livre</th><th>Em ordens</th><th>Preço</th><th>Valor (USDT)</th><th>% da carteira</th></tr></thead><tbody id="wAssets"></tbody></table></div><p id="wNote" class="muted small" style="margin-top:8px"></p></div>
+    </div>
   </section>
 
   <section id="history" class="form" hidden>
@@ -166,12 +208,15 @@ ol{margin:0;padding-left:20px}
   </section>
 </main>
 </div>
+<script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+<script src="/static/chart.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const token = document.body.dataset.token;
 const num = (v, d = 2) => Number(v).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
 const short = (v) => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 let state = null, view = null, formReady = false, saveTimer = null, confirmTimer = null;
+let closeArmed = null, closeTimer = null;
 let pairs = [], market = [], chartPair = null, panelPair = null;
 const GREEN = '#22C55E', RED = '#EF4444';
 
@@ -185,10 +230,11 @@ async function api(path, body) {
 }
 function show(name) {
   view = name;
-  for (const id of ['connect', 'studio', 'panel', 'history']) $(id).hidden = id !== name;
+  for (const id of ['connect', 'studio', 'panel', 'wallet', 'history']) $(id).hidden = id !== name;
   document.querySelectorAll('.tab').forEach((b) => b.dataset.view === name ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'));
   if (name === 'studio' && formReady) preview();
   if (name === 'history') loadHistory();
+  if (name === 'wallet') loadWallet();
 }
 function message(text, warn) {
   $('message').hidden = !text; $('message').textContent = text || '';
@@ -196,7 +242,9 @@ function message(text, warn) {
 }
 const sliders = {
   lookback: ['lookback', 1, (v) => short(v)], zone: ['zone_pct', 100, (v) => short(v) + '% da região'], rr: ['min_reward_risk', 1, (v) => short(v) + ' vezes'],
+  grid: ['grid_levels', 1, (v) => short(v)],
   fast: ['fast_sma', 1, (v) => short(v)], slow: ['slow_sma', 1, (v) => short(v)], stop: ['stop_loss_pct', 100, (v) => short(v) + '%'],
+  catastrophe: ['catastrophe_stop_pct', 100, (v) => Number(v) ? short(v) + '% abaixo do preço médio' : 'Sem stop'],
   capital: ['capital_usdt', 1, (v) => short(v) + ' USDT'], risk: ['risk_per_trade', 100, (v) => short(v) + '%'], pos: ['max_position_pct', 100, (v) => short(v) + '%'], day: ['max_daily_loss_pct', 100, (v) => short(v) + '%'],
 };
 function fillForm(s) {
@@ -213,43 +261,42 @@ function values() {
 function labels() {
   for (const [id, [, , format]] of Object.entries(sliders)) $(id + 'Out').textContent = format($(id).value);
   const sma = $('strategy').value === 'sma';
-  $('rangeFields').hidden = sma; $('smaFields').hidden = !sma;
+  const dca = $('strategy').value === 'dca';
+  const strategy = $('strategy').value, ladder = dca || strategy === 'grid';
+  document.querySelectorAll('[data-strategies]').forEach((el) => { el.hidden = !el.dataset.strategies.split(' ').includes(strategy); });
+  $('riskFields').hidden = ladder; $('catastropheField').hidden = !ladder;
+  $('strategyHelp').textContent = {
+    ranges: 'Compra perto do suporte e tenta vender perto da resistência.',
+    sma: 'Compra e vende quando a média curta cruza a média longa.',
+    dca: 'Compra em até 3 etapas na queda e vende perto da resistência.',
+    breakout: 'Compra quando o preço fecha acima da resistência, com volume 1,5 vez acima da média.',
+    reversion: 'Compra com RSI abaixo de 30 e preço abaixo da Bollinger inferior, mirando a média de 20 candles.',
+    momentum: 'Compra acima da média de 200, com MME 9 sobre MME 21, MACD virando para cima e RSI entre 50 e 70.',
+    grid: 'Deixa compras limitadas em degraus da região e vende cada compra no degrau acima.',
+  }[strategy];
   const v = values(), loss = v.capital_usdt * v.risk_per_trade, day = v.capital_usdt * v.max_daily_loss_pct;
   const count = Math.max(pairs.length, 1), slice = v.capital_usdt / count, order = slice * v.max_position_pct;
-  $('summary').textContent = `Com ${short(v.capital_usdt)} USDT em ${count} ${count > 1 ? 'pares' : 'par'}, cada par fica com ${short(slice)} USDT e arrisca até ${short(slice * v.risk_per_trade)} USDT por operação. Cada par para ao perder ${short(slice * v.max_daily_loss_pct)} USDT no dia. Criptos costumam cair juntas, e em queda muito rápida a perda pode ser maior.`;
+  $('summary').textContent = `Com ${short(v.capital_usdt)} USDT para trading em ${count} ${count > 1 ? 'pares' : 'par'}, cada par fica com ${short(slice)} USDT e arrisca até ${short(slice * v.risk_per_trade)} USDT por operação. Cada par para ao perder ${short(slice * v.max_daily_loss_pct)} USDT no dia. Criptos costumam cair juntas, e em queda muito rápida a perda pode ser maior.`;
   $('summary').className = 'notice';
-  if (order < 10) { $('summary').textContent += ` Atenção: cada ordem teria até ${short(order)} USDT e pode ficar abaixo do mínimo da exchange. Use menos pares ou mais capital.`; $('summary').className = 'notice warn'; }
+  if (dca) {
+    const stop = v.catastrophe_stop_pct;
+    $('summary').textContent = `Cada par fica com ${short(slice)} USDT e compra ${short(slice * 0.25)}, ${short(slice * 0.25)} e ${short(slice * 0.5)} USDT conforme o preço cai. ` +
+      (stop ? `O stop de catástrofe vende tudo ${short(stop * 100)}% abaixo do preço médio. A perda planejada é de até cerca de ${short(slice * stop)} USDT por par, e pode ser maior em queda rápida.` : 'Sem stop e sem limite diário: o bot não vende no prejuízo, mas a perda em aberto pode chegar a quase todo o capital, e o dinheiro pode ficar preso por muito tempo.');
+    $('summary').className = stop ? 'notice' : 'notice warn';
+  }
+  if (walletData && v.capital_usdt > walletData.usdtFree) { $('summary').textContent += ` Atenção: o capital para trading é maior que os ${short(walletData.usdtFree)} USDT livres na carteira.`; $('summary').className = 'notice warn'; }
+  if (strategy === 'grid') {
+    const stop = v.catastrophe_stop_pct, cell = slice / v.grid_levels;
+    $('summary').textContent = `Cada par fica com ${short(slice)} USDT, divididos em ${v.grid_levels} níveis de ${short(cell)} USDT. ` + (stop ? `O stop de catástrofe vende tudo ${short(stop * 100)}% abaixo do preço médio.` : 'Sem stop e sem limite diário: se o preço sair da grade para baixo, as compras ficam presas e a perda em aberto pode ser grande.') + (cell < 10 ? ' Atenção: cada nível pode ficar abaixo do mínimo da exchange.' : '');
+    $('summary').className = stop && cell >= 10 ? 'notice' : 'notice warn';
+  }
+  if (!ladder && order < 10) { $('summary').textContent += ` Atenção: cada ordem teria até ${short(order)} USDT e pode ficar abaixo do mínimo da exchange. Use menos pares ou mais capital.`; $('summary').className = 'notice warn'; }
 }
 function changed() {
   labels(); clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     try { await api('/api/settings', values()); await refresh(); preview(); } catch (e) { message(e.message, true); }
   }, 400);
-}
-function chart(candles, levels, points) {
-  const width = 800, height = 320, pad = 26;
-  const prices = candles.flatMap((c) => [c[1], c[2]]).concat(levels.flatMap((l) => l.values || [l.value])).filter((v) => v !== null && v !== undefined);
-  const low = Math.min(...prices), high = Math.max(...prices), span = high - low || 1;
-  const slot = width / Math.max(candles.length, 1), x = (i) => i * slot + slot / 2, y = (v) => pad + (high - v) / span * (height - 2 * pad);
-  const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${width} ${height + 18}`); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'Gráfico de candles com níveis de preço');
-  const add = (tag, attrs, text) => { const el = document.createElementNS(ns, tag); for (const k in attrs) el.setAttribute(k, attrs[k]); if (text) el.textContent = text; svg.appendChild(el); };
-  candles.forEach(([open, top, bottom, close], i) => {
-    const color = close >= open ? GREEN : RED, body = Math.max(slot * 0.65, 1.5);
-    add('line', { x1: x(i), x2: x(i), y1: y(top), y2: y(bottom), stroke: color, 'stroke-width': 1 });
-    add('rect', { x: x(i) - body / 2, width: body, y: y(Math.max(open, close)), height: Math.max(Math.abs(y(open) - y(close)), 1), fill: color });
-  });
-  for (const level of levels) {
-    if (level.values) {
-      const pts = level.values.map((v, i) => v === null ? null : `${x(i)},${y(v)}`).filter(Boolean).join(' ');
-      if (pts) add('polyline', { points: pts, fill: 'none', stroke: level.color, 'stroke-width': 1.5, 'stroke-dasharray': level.dash || '' });
-    } else if (level.value !== null && level.value !== undefined) {
-      add('line', { x1: 0, x2: width, y1: y(level.value), y2: y(level.value), stroke: level.color, 'stroke-dasharray': level.dash || '' });
-      add('text', { x: 6, y: y(level.value) - 5, fill: level.color, 'font-size': 13 }, `${level.name} ${num(level.value)}`);
-    }
-  }
-  (points || []).forEach((on, i) => { if (on) add('path', { d: `M${x(i)} ${y(candles[i][2]) + 6} l-7 12 h14 z`, fill: '#7CC0FF' }); });
-  return svg;
 }
 function chips(box, names, active, pick) {
   box.replaceChildren(...names.map((name) => {
@@ -267,21 +314,43 @@ function renderPairs() {
   if (!pairs.includes(chartPair)) chartPair = pairs[0];
   chips($('chartPairs'), pairs, chartPair, (name) => { chartPair = name; renderPairs(); preview(); });
   const term = $('pairSearch').value.trim().toUpperCase();
-  const found = term ? market.filter((name) => name.includes(term) && !pairs.includes(name)).slice(0, 8) : [];
+  const available = market.filter((name) => !pairs.includes(name) && name.includes(term));
+  const found = available.slice(0, 80);
+  $('pairCount').textContent = market.length ? `${available.length} de ${market.length} pares disponíveis${available.length > found.length ? '. Busque para ver os demais.' : ''}` : '';
   chips($('pairResults'), found, null, (name) => {
     if (pairs.length >= state.maxSymbols) { message(`Escolha no máximo ${state.maxSymbols} pares.`, true); return; }
     pairs.push(name); chartPair = name; $('pairSearch').value = ''; renderPairs(); changed();
   });
-  if (term && !market.length) $('pairResults').textContent = 'Lista de pares indisponível no momento.';
+  if (!market.length) $('pairCount').textContent = 'Carregando pares...';
 }
+let studioChart = null, panelChart = null, liveSymbol = null, liveLoaded = 0, previewSymbol = null;
 async function preview() {
   try {
     const data = await api('/api/preview', { ...values(), symbol: chartPair });
-    $('previewChart').replaceChildren(chart(data.candles, [
-      { name: 'Resistência', values: data.resistance, color: '#E8EDF2', dash: '6 6' },
-      { name: 'Suporte', values: data.support, color: '#7CC0FF', dash: '6 6' },
-    ], data.buys));
-  } catch (e) { $('previewChart').textContent = e.message; }
+    if (!studioChart) studioChart = new BotChart($('previewChart'));
+    if (previewSymbol !== `${chartPair}-${$('timeframe').value}`) { studioChart.reset(); previewSymbol = `${chartPair}-${$('timeframe').value}`; }
+    studioChart.update(data);
+  } catch (e) { if (!studioChart) $('previewChart').textContent = e.message; else message(e.message, true); }
+}
+async function updateLive(data) {
+  if (view !== 'panel' || !panelPair) return;
+  try {
+    if (!panelChart) panelChart = new BotChart($('liveChart'));
+    if (liveSymbol !== panelPair || Date.now() - liveLoaded > 20000) {
+      const changed = liveSymbol !== panelPair;
+      liveSymbol = panelPair; liveLoaded = Date.now();
+      const candles = await api(`/api/live-candles?symbol=${encodeURIComponent(panelPair)}`);
+      if (changed) panelChart.reset();
+      panelChart.update(candles);
+    }
+    const p = data.position, levels = [];
+    if (p) {
+      levels.push({ name: 'Alvo', value: p.target, color: GREEN }, { name: p.levels ? 'Preço médio' : 'Entrada', value: p.entry_price, color: '#E8EDF2', dashed: true });
+      if (p.stop !== null && p.stop !== undefined) levels.push({ name: 'Stop', value: p.stop, color: RED });
+      if (p.levels && p.steps < 3) levels.push({ name: `Compra ${p.steps + 1}`, value: p.levels[p.steps - 1], color: '#FFB454', dashed: true });
+    }
+    panelChart.setLevels(levels);
+  } catch (e) { $('liveNote').textContent = e.message; }
 }
 function renderResults() {
   const v = state.validation, box = $('results'), current = state.validationCurrent;
@@ -290,15 +359,18 @@ function renderResults() {
   if (v.state === 'error') { box.textContent = v.message; return; }
   if (v.state !== 'done' || !current) { box.innerHTML = '<p class="muted">Teste esta configuração antes de ligar o bot.</p>'; return; }
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Par</th><th>Retorno 70%</th><th>Retorno 30%</th><th>Segurar, 30%</th><th>Operações</th><th>Resultado</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>Par</th><th>Retorno 70%</th><th>Retorno 30%</th><th>Segurar, 30%</th><th>Operações</th><th>Maior perda aberta</th><th>Mais tempo preso</th><th>Resultado</th></tr></thead>';
   const body = table.createTBody();
   for (const pair of v.pairs) {
-    const cells = pair.error ? [pair.symbol, '-', '-', '-', '-', 'Sem dados'] : [
+    const cells = pair.error ? [pair.symbol, '-', '-', '-', '-', '-', '-', 'Sem dados'] : [
       pair.symbol, `${num(pair.first.return_pct)}%`, `${num(pair.second.return_pct)}%`, `${num(pair.second.matched_hold_pct)}%`,
-      pair.first.trades + pair.second.trades, pair.approved ? 'Aprovado' : 'Reprovado'];
+      pair.first.trades + pair.second.trades,
+      ['dca', 'grid'].includes(state.settings.strategy) ? `${num(Math.min(pair.first.max_open_loss_pct, pair.second.max_open_loss_pct))}%` : '-',
+      ['dca', 'grid'].includes(state.settings.strategy) ? `${num(Math.max(pair.first.longest_hold_days, pair.second.longest_hold_days), 0)} dias` : '-',
+      (pair.approved ? 'Aprovado' : 'Reprovado') + (pair.first.open_at_end || pair.second.open_at_end ? ' (terminou preso)' : '')];
     const row = body.insertRow(); cells.forEach((t) => { row.insertCell().textContent = t; });
   }
-  const total = body.insertRow(); ['Média', `${num(v.firstReturn)}%`, `${num(v.secondReturn)}%`, '', '', ''].forEach((t) => { total.insertCell().textContent = t; });
+  const total = body.insertRow(); ['Média', `${num(v.firstReturn)}%`, `${num(v.secondReturn)}%`, '', '', '', '', ''].forEach((t) => { total.insertCell().textContent = t; });
   const wrap = document.createElement('div'); wrap.className = 'box'; wrap.appendChild(table);
   const verdict = document.createElement('p'); verdict.className = 'notice' + (v.approved ? '' : ' warn'); verdict.style.marginTop = '12px';
   verdict.textContent = v.approved
@@ -318,32 +390,47 @@ function renderPanel() {
   const data = state.snapshots[panelPair], open = all.filter((d) => d.position);
   $('pause').disabled = $('off').disabled = $('emergency').disabled = !state.running;
   $('pause').textContent = state.paused ? 'Retomar entradas' : 'Pausar novas entradas';
-  $('panelTitle').textContent = `${state.settings.symbols.split(',').length} ${state.settings.symbols.includes(',') ? 'pares' : 'par'} · ${state.settings.timeframe}`;
-  $('kStatus').textContent = !state.running ? 'Desligado' : state.paused ? 'Entradas pausadas' : !all.length ? 'Iniciando' : open.length ? `${open.length} em operação` : 'Aguardando sinal';
+  const pairCount = names.length || state.settings.symbols.split(',').length;
+  $('panelTitle').textContent = `${pairCount} ${pairCount > 1 ? 'pares' : 'par'} · ${state.settings.timeframe}`;
+  $('kStatus').textContent = !state.running ? 'Desligado' : state.paused ? 'Entradas pausadas' : !all.length ? 'Iniciando' : open.length ? `${open.length} em operação` : all.some((d) => d.status.startsWith('grade')) ? 'Grade ativa' : 'Aguardando sinal';
   chips($('panelPairs'), names, panelPair, (name) => { panelPair = name; renderPanel(); });
   const stopped = Object.entries(state.halted);
   $('halted').hidden = !stopped.length; $('halted').textContent = stopped.map(([k, v]) => `${k}: ${v}`).join(' | ');
   if (!data) return;
   const equity = all.reduce((s, d) => s + d.equity, 0), result = equity - all.reduce((s, d) => s + d.capital, 0);
+  const sum = (key) => all.reduce((s, d) => s + (d[key] || 0), 0), signed = (v) => `${v >= 0 ? '+' : ''}${num(v)} USDT`;
   $('kEquity').textContent = `${num(equity)} USDT`;
+  $('kTrading').textContent = `${num(sum('trading'))} USDT`;
+  $('kInvested').textContent = `Investido: ${num(sum('invested'))} USDT`;
+  $('kAvailable').textContent = `${num(sum('available'))} USDT`;
+  $('kOpen').textContent = `Em aberto: ${signed(sum('openResult'))}`;
+  const capitalRows = all.map((d) => [d.symbol, state.halted[d.symbol] ? 'Parado' : d.position ? 'Em operação' : d.status, `${num(d.equity)} USDT`, `${num(d.trading)} USDT`, `${num(d.available)} USDT`, signed(d.equity - d.capital)]);
+  tableRows($('panelCapital'), capitalRows);
   $('kResult').textContent = `${result >= 0 ? '+' : ''}${num(result)} USDT`;
   $('kResult').style.color = result >= 0 ? GREEN : RED;
   $('kPriceLabel').textContent = `Preço ${panelPair}`;
   $('kPrice').textContent = data.price ? num(data.price) : '-';
-  if (data.candles.length) {
-    const position = data.position, levels = [{ name: 'Resistência', value: data.resistance, color: '#E8EDF2', dash: '6 6' }, { name: 'Suporte', value: data.support, color: '#7CC0FF', dash: '6 6' }];
-    if (position) levels.push({ name: 'Alvo', value: position.target, color: GREEN }, { name: 'Entrada', value: position.entry_price, color: '#E8EDF2', dash: '2 5' }, { name: 'Stop', value: position.stop, color: RED });
-    $('liveChart').replaceChildren(chart(data.candles.slice(-120), levels));
-  }
+  updateLive(data);
   const box = $('position');
   if (!open.length) box.innerHTML = '<p class="muted">Nenhuma posição aberta.</p>';
   else box.replaceChildren(...open.flatMap((d) => {
-    const p = d.position, risk = p.qty * (p.entry_price - p.stop), gain = p.qty * (p.target - p.entry_price);
-    return [[d.symbol, p.oco_id ? 'OCO ativo' : 'Aguardando OCO'], ['Quantidade', num(p.qty, 5)], ['Risco até o stop', `${num(risk)} USDT`], ['Ganho no alvo', `${num(gain)} USDT`]].map(([a, b], i) => {
+    const p = d.position, gain = p.qty * p.target * 0.999 - p.entry_cost, stopLabel = state.settings.catastrophe_stop_pct ? `${short(state.settings.catastrophe_stop_pct * 100)}% abaixo do preço médio` : 'Sem stop';
+    const lines = p.grid ? [[d.symbol, `Grade: ${p.grid.held} de ${p.grid.total} níveis`], ['Em trading', `${num(d.trading)} USDT`], ['Investido', `${num(d.invested)} USDT`], ['Preço médio', num(p.entry_price)], ['Resultado em aberto', signed(d.openResult)], ['Ordens abertas', p.grid.orders], ['Faixa', `${num(p.grid.low)} a ${num(p.grid.high)}`], ['Proteção', stopLabel]] : p.levels ? [[d.symbol, `Compra ${p.steps} de 3`], ['Em trading', `${num(d.trading)} USDT`], ['Investido', `${num(d.invested)} USDT`], ['Preço médio', num(p.entry_price)], ['Ponto de empate', num(p.entry_cost / (p.qty * 0.999))], ['Resultado em aberto', signed(d.openResult)], ['Venda no alvo', p.sell_id ? `Ativa em ${num(p.target)}` : 'Aguardando'], ['Proteção', stopLabel], ['Ganho no alvo', signed(gain)]]
+      : [[d.symbol, p.oco_id ? 'OCO ativo' : 'Aguardando OCO'], ['Em trading', `${num(d.trading)} USDT`], ['Quantidade', num(p.qty, 5)], ['Risco até o stop', `${num(p.qty * (p.entry_price - p.stop))} USDT`], ['Ganho no alvo', signed(gain)]];
+    const rows = lines.map(([a, b], i) => {
       const row = document.createElement('p'); row.className = 'row'; if (i === 0) row.style.marginTop = '8px';
       const left = document.createElement(i === 0 ? 'strong' : 'span'); if (i) left.className = 'muted'; left.textContent = a;
       const right = document.createElement('span'); right.textContent = b; row.append(left, right); return row;
     });
+    const close = document.createElement('button'); close.className = 'btn'; close.style.margin = '8px 0 16px';
+    const armed = closeArmed === d.symbol;
+    close.textContent = armed ? 'Confirmar: vender agora' : `Encerrar ${d.symbol}`;
+    if (armed) close.className = 'btn danger';
+    close.addEventListener('click', () => {
+      if (closeArmed !== d.symbol) { closeArmed = d.symbol; clearTimeout(closeTimer); closeTimer = setTimeout(() => { closeArmed = null; renderPanel(); }, 5000); renderPanel(); return; }
+      closeArmed = null; act(async () => { await api('/api/operations/close', { symbol: d.symbol }); });
+    });
+    return [...rows, close];
   }));
   const sides = { buy: 'Compra', sell: 'Venda' }, statuses = { filled: 'Executada', failed: 'Falhou', pending: 'Pendente' };
   const orders = all.flatMap((d) => d.orders).sort((a, b) => b.created_at - a.created_at).slice(0, 10);
@@ -389,6 +476,20 @@ function monthChart(months) {
   });
   tooltip($('hMonths'), svg, months.length, (i) => [i * slot + slot / 2, 232 - Math.max(months[i].sold / high * 200, 2)], (i) => `${months[i].month}: ${num(months[i].sold)} USDT`);
 }
+let walletData = null, walletLoaded = 0;
+async function loadWallet() {
+  try {
+    walletData = await api('/api/wallet'); walletLoaded = Date.now();
+    $('wBody').hidden = false; $('wEmpty').hidden = true;
+    const w = walletData;
+    $('wTotal').textContent = `${num(w.total)} USDT`; $('wUsdt').textContent = `${num(w.usdtFree)} USDT`;
+    $('wTrading').textContent = `${num(w.tradingCapital)} USDT`; $('wCount').textContent = w.assets.length;
+    $('kAccount').textContent = `${num(w.total)} USDT`; $('kAccountFree').textContent = `USDT livre: ${num(w.usdtFree)}`;
+    tableRows($('wAssets'), w.assets.map((a) => [a.asset, short(a.total), short(a.free), short(a.locked), a.price === null ? '-' : short(a.price), a.value === null ? 'Sem preço' : num(a.value), a.value === null || !w.total ? '-' : `${num(a.value / w.total * 100)}%`]));
+    $('wNote').textContent = (w.unpriced ? `${w.unpriced} ativos sem par em USDT ficaram fora do total. ` : '') + 'Valores calculados com os preços da testnet, que podem ser diferentes do mercado real. O bot usa somente o capital para trading.';
+    labels();
+  } catch (e) { $('wBody').hidden = true; $('wEmpty').hidden = false; $('wEmpty').textContent = e.message; }
+}
 function historyQuery() { return `symbol=${encodeURIComponent($('hPair').value)}&days=${$('hDays').value}`; }
 async function loadHistory() {
   let h;
@@ -417,8 +518,9 @@ async function refresh() {
   if (view === 'connect' && state.hasKeys && !$('keysResult').textContent) show('studio');
   if (!view) show(!state.hasKeys ? 'connect' : state.running ? 'panel' : 'studio');
   document.querySelectorAll('#studio input, #studio select').forEach((el) => { el.disabled = state.running; });
-  message(state.message, state.message && state.message.startsWith('Bot parado'));
+  if (state.message || !$('message').textContent.startsWith('Operação')) message(state.message, state.message && state.message.startsWith('Bot parado'));
   renderResults(); renderStart(); renderPanel();
+  if (state.hasKeys && Date.now() - walletLoaded > 30000) { walletLoaded = Date.now(); loadWallet(); }
 }
 async function act(fn) { try { await fn(); await refresh(); } catch (e) { message(e.message, true); } }
 
@@ -431,7 +533,17 @@ $('hCsv').addEventListener('click', async () => {
     const link = document.createElement('a'); link.href = URL.createObjectURL(await response.blob()); link.download = 'historico-trades.csv'; link.click(); URL.revokeObjectURL(link.href);
   } catch (e) { message(e.message, true); }
 });
-api('/api/markets').then((r) => { market = r.symbols; renderPairs(); }).catch(() => {});
+api('/api/markets').then((r) => {
+  market = r.symbols; renderPairs();
+  $('pairOptions').replaceChildren(...market.map((name) => { const o = document.createElement('option'); o.value = name; return o; }));
+}).catch(() => {});
+$('newOperation').addEventListener('submit', (event) => {
+  event.preventDefault(); $('opOpen').disabled = true;
+  act(async () => {
+    await api('/api/operations', { symbol: $('opSymbol').value, amount: Number($('opAmount').value), targetPct: Number($('opTarget').value), stopPct: Number($('opStop').value) });
+    $('opSymbol').value = ''; message('Operação aberta.'); setTimeout(() => { if ($('message').textContent === 'Operação aberta.') message(''); }, 4000);
+  }).finally(() => { $('opOpen').disabled = false; });
+});
 document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
 document.querySelectorAll('#studio input[type=range], #studio select').forEach((el) => el.addEventListener('input', changed));
 $('saveKeys').addEventListener('click', async () => {

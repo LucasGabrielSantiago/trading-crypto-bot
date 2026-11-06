@@ -13,6 +13,7 @@ from pathlib import Path
 import ccxt
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from .backtest import evaluate
 from .config import (
@@ -20,14 +21,21 @@ from .config import (
     save_overrides,
 )
 from .history import History, analyze
-from .exchange import Exchange, create_testnet_client, fetch_public_history
-from .runner import Bot, Portfolio
+from .indicators import indicator_frame
+from .exchange import (
+    Exchange, create_testnet_client, fetch_public_history, fetch_testnet_history,
+)
+from .runner import DcaBot, Halt, ManualBot, Portfolio, make_bot
 from .storage import Storage
 from .strategy import BUY, build_plan
 
 PORT = 8765
 HISTORY_CANDLES = {"1h": 4380, "4h": 4380, "1d": 1460}
 CACHE_SECONDS = 300
+LIVE_CACHE_SECONDS = 20
+WALLET_CACHE_SECONDS = 30
+CHART_CANDLES = 500
+LIVE_HISTORY_CANDLES = 1000
 INDEX = Path(__file__).parent / "static" / "index.html"
 
 
@@ -69,9 +77,10 @@ def testnet_symbols():
 
 class Controller:
     def __init__(self, exchange_factory=testnet_exchange, history=fetch_public_history,
-                 symbols=testnet_symbols, trade_history=None):
+                 symbols=testnet_symbols, trade_history=None, live_history=fetch_testnet_history):
         self.exchange_factory = exchange_factory
         self.history = history
+        self.live_history = live_history
         self.symbols_source = symbols
         self.trade_history = trade_history
         self.autostart_path = None
@@ -86,6 +95,9 @@ class Controller:
         self.validation = {"state": "idle"}
         self.cache = {}
         self.symbols_cache = None
+        self.wallet_exchange = None
+        self.wallet_key = None
+        self.wallet_cache = None
 
     @property
     def running(self):
@@ -105,17 +117,60 @@ class Controller:
             self.symbols_cache = self.symbols_source()
         return self.symbols_cache
 
-    def preview(self, settings, symbol):
-        frame = self.candles(settings, symbol, HISTORY_CANDLES[settings.timeframe]).tail(300)
+    def chart_view(self, frame, settings, symbol):
+        """Calcula tudo no histórico completo e entrega só os candles do gráfico."""
         frame = frame.reset_index(drop=True)
         plan = build_plan(frame, settings)
+        indicators = indicator_frame(frame).tail(CHART_CANDLES)
+        recent = frame.tail(CHART_CANDLES)
         return clean({
             "symbol": symbol,
-            "candles": frame[["open", "high", "low", "close"]].tail(120).values.tolist(),
-            "support": plan["support"].tail(120).tolist(),
-            "resistance": plan["resistance"].tail(120).tolist(),
-            "buys": [bool(item == BUY) for item in plan["signal"].tail(120)],
+            "title": f"{symbol} · {settings.timeframe}",
+            "candles": [
+                {"time": int(row.timestamp // 1000), "open": row.open, "high": row.high,
+                 "low": row.low, "close": row.close, "volume": row.volume}
+                for row in recent.itertuples(index=False)
+            ],
+            "indicators": {key: indicators[key].tolist() for key in indicators.columns},
+            "support": plan["support"].tail(CHART_CANDLES).tolist(),
+            "resistance": plan["resistance"].tail(CHART_CANDLES).tolist(),
+            "buys": [bool(item == BUY) for item in plan["signal"].tail(CHART_CANDLES)],
         })
+
+    def preview(self, settings, symbol):
+        frame = self.candles(settings, symbol, HISTORY_CANDLES[settings.timeframe])
+        return self.chart_view(frame, settings, symbol)
+
+    def live_view(self, settings, symbol):
+        key = ("live", symbol, settings.timeframe)
+        cached = self.cache.get(key)
+        if cached and time.time() - cached[0] < LIVE_CACHE_SECONDS:
+            return cached[1]
+        frame = self.live_history(symbol, settings.timeframe, LIVE_HISTORY_CANDLES)
+        view = self.chart_view(frame, settings, symbol)
+        self.cache[key] = (time.time(), view)
+        return view
+
+    def wallet(self, settings):
+        if not settings.api_key:
+            raise ValueError("Conecte a testnet para ver a carteira")
+        cached = self.wallet_cache
+        if cached and cached[1] == settings.api_key and time.time() - cached[0] < WALLET_CACHE_SECONDS:
+            return cached[2]
+        if self.wallet_exchange is None or self.wallet_key != settings.api_key:
+            exchange = self.exchange_factory(settings.for_symbol(settings.symbol_list[0]))
+            exchange.load()
+            self.wallet_exchange, self.wallet_key = exchange, settings.api_key
+        assets = self.wallet_exchange.wallet()
+        total = sum(row["value"] or 0 for row in assets)
+        usdt = next((row["free"] for row in assets if row["asset"] == "USDT"), 0.0)
+        view = clean({
+            "assets": assets, "total": total, "usdtFree": usdt,
+            "tradingCapital": settings.capital_usdt,
+            "unpriced": sum(1 for row in assets if row["value"] is None),
+        })
+        self.wallet_cache = (time.time(), settings.api_key, view)
+        return view
 
     def start_validation(self, settings):
         with self.lock:
@@ -200,8 +255,14 @@ class Controller:
             for symbol in settings.symbol_list:
                 pair = settings.for_symbol(symbol)
                 # SQLite exige que a conexão seja usada na thread que a criou.
-                bots.append(Bot(pair, self.exchange_factory(pair), Storage(pair.db_path)))
-            self.portfolio = Portfolio(bots, settings.poll_seconds, self.trade_history)
+                bots.append(make_bot(pair, self.exchange_factory(pair), Storage(pair.db_path)))
+            for symbol, amount in self._manual_pairs(settings).items():
+                if symbol not in settings.symbol_list:
+                    bots.append(self._manual_bot(settings, symbol, amount))
+            self.portfolio = Portfolio(
+                bots, settings.poll_seconds, self.trade_history,
+                lambda symbol: self._manual_closed(settings, symbol),
+            )
             self.portfolio.run(self._update, lambda: self.keep_running, self._wait)
             self.halted = dict(self.portfolio.halted)
             self.message = "Bot desligado. Posições abertas continuam com o OCO na exchange."
@@ -223,6 +284,78 @@ class Controller:
     def _wait(self, seconds):
         self.wake.wait(seconds)
         self.wake.clear()
+
+    def _manual_path(self, settings):
+        return Path(settings.db_path).with_name("manual_operations.json")
+
+    def _manual_pairs(self, settings):
+        try:
+            return json.loads(self._manual_path(settings).read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            return {}
+
+    def _save_manual(self, settings, pairs):
+        self._manual_path(settings).write_text(json.dumps(pairs), encoding="utf-8")
+
+    def _manual_bot(self, settings, symbol, amount):
+        pair = dataclasses.replace(settings.for_symbol(symbol), capital_usdt=amount)
+        return ManualBot(pair, self.exchange_factory(pair), Storage(pair.db_path))
+
+    def _command(self, action):
+        portfolio = self.portfolio
+        if not portfolio:
+            raise ValueError("Ligue o bot para operar pelo painel")
+        future = portfolio.submit(action)
+        self.wake.set()
+        try:
+            return future.result(timeout=30)
+        except ccxt.BaseError as error:
+            raise ValueError(f"A exchange recusou a operação: {error}") from error
+        except Halt as error:
+            raise ValueError(str(error)) from error
+        except TimeoutError as error:
+            raise ValueError("O bot demorou para responder. Confira o painel.") from error
+
+    def open_operation(self, settings, symbol, amount, target_pct, stop_pct):
+        if not SYMBOL_PATTERN.fullmatch(symbol):
+            raise ValueError("Par inválido")
+        if amount < 10 or not 0 < stop_pct < 1 or target_pct <= 0:
+            raise ValueError("Use pelo menos 10 USDT, com alvo e stop válidos")
+
+        def action(portfolio):
+            bot = portfolio.bots.get(symbol)
+            if symbol in portfolio.halted:
+                raise ValueError(f"{symbol} está parado. Veja o motivo no painel.")
+            if bot is None:
+                if len(portfolio.bots) >= MAX_SYMBOLS:
+                    raise ValueError(f"O limite é de {MAX_SYMBOLS} pares ao mesmo tempo")
+                bot = self._manual_bot(settings, symbol, amount)
+                bot.startup()
+                bot.open_manual(amount, target_pct, stop_pct)
+                portfolio.add_bot(bot)
+                pairs = self._manual_pairs(settings)
+                pairs[symbol] = amount
+                self._save_manual(settings, pairs)
+                return
+            if isinstance(bot, DcaBot) or settings.strategy == "grid":
+                raise ValueError(f"{symbol} já é controlado pela estratégia automática")
+            bot.open_manual(amount, target_pct, stop_pct)
+
+        self._command(action)
+
+    def close_operation(self, symbol):
+        def action(portfolio):
+            bot = portfolio.bots.get(symbol)
+            if bot is None:
+                raise ValueError(f"Não há operação em {symbol}")
+            bot.close_position()
+
+        self._command(action)
+
+    def _manual_closed(self, settings, symbol):
+        pairs = self._manual_pairs(settings)
+        pairs.pop(symbol, None)
+        self._save_manual(settings, pairs)
 
     def set_paused(self, paused):
         portfolio = self.portfolio
@@ -261,7 +394,10 @@ class Controller:
 def create_app(controller=None, token=None, settings_loader=load_settings):
     controller = controller or Controller()
     token = token or secrets.token_urlsafe(32)
-    allowed_hosts = {f"127.0.0.1:{PORT}", f"localhost:{PORT}", "testserver"}
+    # No Docker, a porta do navegador pode ser diferente da porta interna.
+    public_port = os.environ.get("PUBLIC_PORT", PORT)
+    allowed_hosts = {f"127.0.0.1:{public_port}", f"localhost:{public_port}",
+                     f"127.0.0.1:{PORT}", f"localhost:{PORT}", "testserver"}
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.token = token
 
@@ -273,7 +409,12 @@ def create_app(controller=None, token=None, settings_loader=load_settings):
         if request.url.path.startswith("/api/"):
             if not secrets.compare_digest(request.headers.get("x-bot-token", ""), token):
                 return JSONResponse({"detail": "Acesso negado"}, status_code=403)
-        return await call_next(request)
+        response = await call_next(request)
+        if not request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    app.mount("/static", StaticFiles(directory=INDEX.parent), name="static")
 
     def guarded(action):
         try:
@@ -324,6 +465,26 @@ def create_app(controller=None, token=None, settings_loader=load_settings):
                 raise ValueError("A testnet recusou essas chaves ou está fora do ar") from error
             save_keys(api_key, api_secret)
             return {"base": base, "quote": quote}
+        return guarded(action)
+
+    @app.get("/api/live-candles")
+    def live_candles(symbol: str):
+        def action():
+            if not SYMBOL_PATTERN.fullmatch(symbol):
+                raise ValueError("Par inválido")
+            try:
+                return controller.live_view(settings_loader(), symbol)
+            except ccxt.BaseError as error:
+                raise ValueError("Não foi possível baixar os candles da testnet") from error
+        return guarded(action)
+
+    @app.get("/api/wallet")
+    def wallet():
+        def action():
+            try:
+                return controller.wallet(settings_loader())
+            except (ccxt.BaseError, RuntimeError) as error:
+                raise ValueError("Não foi possível ler a carteira da testnet") from error
         return guarded(action)
 
     @app.get("/api/markets")
@@ -377,6 +538,24 @@ def create_app(controller=None, token=None, settings_loader=load_settings):
     def validate_settings():
         controller.start_validation(settings_loader())
         return ok()
+
+    @app.post("/api/operations")
+    def operation_open(values: dict = Body(...)):
+        def action():
+            try:
+                controller.open_operation(
+                    settings_loader(), str(values.get("symbol", "")).strip().upper(),
+                    float(values.get("amount", 0)), float(values.get("targetPct", 0)) / 100,
+                    float(values.get("stopPct", 0)) / 100,
+                )
+            except TypeError as error:
+                raise ValueError("Dados da operação inválidos") from error
+            return ok()
+        return guarded(action)
+
+    @app.post("/api/operations/close")
+    def operation_close(values: dict = Body(...)):
+        return guarded(lambda: controller.close_operation(str(values.get("symbol", ""))) or ok())
 
     @app.post("/api/bot/start")
     def bot_start():
