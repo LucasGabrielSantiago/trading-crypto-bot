@@ -241,8 +241,10 @@ quantidade, valor em ordens, preço e percentual. A lista de pares disponíveis 
 
 ### Planejar e abrir uma operação
 
-Em **Painel > Nova operação**, escolha o par, a estratégia, o valor em USDT e as porcentagens. O
-preço de entrada vem preenchido com o preço atual da testnet e pode ser alterado para simular. A tabela
+Em **Painel > Nova operação**, escolha o par, a estratégia, o valor e as porcentagens. O valor pode ser
+digitado em USDT ou na quantidade da moeda do par, como 0,5 SOL, e o outro lado aparece convertido. Os
+preços são sempre em USDT por unidade da moeda do par. O preço de entrada vem preenchido com o preço
+atual da testnet do par escolhido e pode ser alterado para simular. A tabela
 mostra os preços e as quantidades antes de abrir.
 
 ![Planejador de nova operação](docs/images/tela-nova-operacao.png)

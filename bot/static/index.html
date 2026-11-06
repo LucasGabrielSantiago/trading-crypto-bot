@@ -180,13 +180,17 @@ ol{margin:0;padding-left:20px}
           <label style="flex:1 1 160px">Par<input id="opSymbol" type="text" list="pairOptions" placeholder="SOL/USDT" autocomplete="off" required></label>
           <datalist id="pairOptions"></datalist>
           <label style="flex:1 1 200px">Estratégia<select id="opMode"><option value="simple">Compra única com alvo e stop</option><option value="dca">Preço médio (3 compras)</option></select></label>
-          <label style="flex:1 1 120px">Valor (USDT)<input id="opAmount" type="number" min="10" step="1" value="100" required></label>
-          <label style="flex:1 1 140px">Preço de entrada<input id="opEntry" type="number" min="0" step="any" required></label>
+          <label style="flex:1 1 150px"><span id="opAmountLabel">Valor</span>
+            <span class="actions" style="gap:6px;flex-wrap:nowrap"><input id="opAmount" type="number" min="0" step="any" value="100" required style="flex:1 1 auto;min-width:0">
+            <select id="opUnit" aria-label="Unidade do valor" style="flex:0 0 96px"><option value="quote">USDT</option><option value="base">Moeda</option></select></span>
+            <span id="opAmountHint" class="muted small"></span></label>
+          <label style="flex:1 1 160px"><span id="opEntryLabel">Preço de entrada</span><input id="opEntry" type="number" min="0" step="any" required>
+            <span id="opPriceHint" class="muted small"></span></label>
         </div>
         <div class="actions" style="align-items:flex-end">
           <label id="opSpacingField" style="flex:1 1 160px">Distância entre compras (%)<input id="opSpacing" type="number" min="0.1" max="49" step="0.1" value="5"></label>
           <label style="flex:1 1 140px">Stop gain (%)<input id="opTarget" type="number" min="0.1" step="0.1" value="6" required></label>
-          <label style="flex:1 1 140px">Preço de venda<input id="opTargetPrice" type="number" min="0" step="any" placeholder="Opcional"></label>
+          <label style="flex:1 1 140px"><span id="opTargetLabel">Preço de venda</span><input id="opTargetPrice" type="number" min="0" step="any" placeholder="Opcional"></label>
           <label style="flex:1 1 140px">Stop loss (%)<input id="opStop" type="number" min="0.1" max="99" step="0.1" value="3" required></label>
           <button id="opOpen" class="btn primary" type="submit">Abrir operação</button>
         </div>
@@ -626,21 +630,48 @@ api('/api/markets').then((r) => {
   market = r.symbols; renderPairs();
   $('pairOptions').replaceChildren(...market.map((name) => { const o = document.createElement('option'); o.value = name; return o; }));
 }).catch(() => {});
-let opPrice = null, opPriceSymbol = null;
-async function loadOpPrice() {
-  const symbol = $('opSymbol').value.trim().toUpperCase();
-  if (!market.includes(symbol) || symbol === opPriceSymbol) return renderPlan();
+let opPrice = null, opPriceSymbol = null, opLoading = null;
+const opPair = () => { const s = $('opSymbol').value.trim().toUpperCase(); return /^[A-Z0-9]{2,20}\/USDT$/.test(s) ? s : null; };
+function opLabels() {
+  const pair = opPair(), base = pair ? pair.split('/')[0] : 'moeda';
+  $('opUnit').options[1].textContent = base;
+  $('opEntryLabel').textContent = `Preço de entrada (USDT por ${base})`;
+  $('opTargetLabel').textContent = `Preço de venda (USDT por ${base})`;
+  $('opAmountLabel').textContent = $('opUnit').value === 'base' ? `Quantidade de ${base}` : 'Valor em USDT';
+}
+async function loadOpPrice(force) {
+  opLabels();
+  const symbol = opPair();
+  if (!symbol) { opPrice = null; opPriceSymbol = null; $('opPriceHint').textContent = ''; return renderPlan(); }
+  if (symbol === opPriceSymbol && !force) return renderPlan();
+  if (opLoading === symbol) return;
+  opLoading = symbol; $('opPriceHint').textContent = 'Buscando o preço...';
   try {
     const data = await api(`/api/live-candles?symbol=${encodeURIComponent(symbol)}`);
+    if (opPair() !== symbol) return;
+    const changed = symbol !== opPriceSymbol;
     opPrice = data.candles[data.candles.length - 1].close; opPriceSymbol = symbol;
-    $('opEntry').value = Number(opPrice.toPrecision(6));
-  } catch (e) { opPrice = null; opPriceSymbol = null; }
+    if (changed || !Number($('opEntry').value)) $('opEntry').value = Number(opPrice.toPrecision(6));
+    if (changed) $('opTargetPrice').value = '';
+    $('opPriceHint').textContent = `Preço atual: ${num(opPrice, opPrice >= 100 ? 2 : opPrice >= 1 ? 4 : 8)} USDT`;
+  } catch (e) {
+    opPrice = null; opPriceSymbol = null; $('opPriceHint').textContent = market.length && !market.includes(symbol) ? 'Par não encontrado na testnet' : 'Não foi possível buscar o preço';
+  } finally { opLoading = null; }
   renderPlan();
+}
+function opAmountUsdt() {
+  const value = Number($('opAmount').value), entry = Number($('opEntry').value);
+  return $('opUnit').value === 'base' ? value * entry : value;
 }
 function renderPlan() {
   const dca = $('opMode').value === 'dca';
   $('opSpacingField').hidden = !dca;
-  const amount = Number($('opAmount').value), entry = Number($('opEntry').value);
+  opLabels();
+  const amount = opAmountUsdt(), entry = Number($('opEntry').value);
+  const pairBase = (opPair() || 'moeda/').split('/')[0];
+  $('opAmountHint').textContent = !(amount > 0 && entry > 0) ? '' : $('opUnit').value === 'base'
+    ? `≈ ${num(amount)} USDT` : `≈ ${num(amount / entry, amount / entry >= 100 ? 2 : 6)} ${pairBase}`;
+  if (entry > 0 && opPrice && (entry / opPrice > 2 || entry / opPrice < 0.5)) $('opPriceHint').textContent = `Preço atual: ${num(opPrice, opPrice >= 100 ? 2 : 4)} USDT. O preço digitado está muito longe.`;
   const target = Number($('opTarget').value) / 100, stop = Number($('opStop').value) / 100, gap = Number($('opSpacing').value) / 100;
   const box = $('opPlan'), base = ($('opSymbol').value.split('/')[0] || 'ativo').toUpperCase();
   if (!(amount > 0 && entry > 0 && target > 0 && stop > 0)) { box.replaceChildren(); return; }
@@ -663,19 +694,22 @@ function renderPlan() {
   const wrap = document.createElement('div'); wrap.className = 'box'; wrap.appendChild(table);
   const note = document.createElement('p'); note.className = 'muted small'; note.style.marginTop = '8px';
   const off = opPrice && Math.abs(entry / opPrice - 1) > 0.005;
-  note.textContent = `Valores aproximados, com taxa de 0,1% na compra e na venda. ${amount} USDT a ${price(entry)} compram ${qty(amount / entry)} se tudo entrar no mesmo preço.` +
+  note.textContent = `Valores aproximados, com taxa de 0,1% na compra e na venda. ${num(amount)} USDT a ${price(entry)} compram ${qty(amount / entry)} se tudo entrar no mesmo preço.` +
     (off ? ` Atenção: o preço atual da testnet é ${price(opPrice)}. Ao abrir, a compra 1 sai a mercado nesse preço, e os níveis são recalculados com as mesmas porcentagens.` : '') +
     (fixed ? ` O preço de venda fica fixo em ${price(targetPrice)}, mesmo que a entrada mude.` : ' Sem preço de venda, ele é calculado pelo stop gain (%) sobre a entrada real.');
-  if (off) note.className = 'notice warn small';
+  const minimum = dca ? 40 : 10;
+  if (amount < minimum) note.textContent = `Atenção: o valor mínimo é ${minimum} USDT${dca ? ' no preço médio' : ''}, e este plano usa ${num(amount)} USDT. ` + note.textContent;
+  if (off || amount < minimum) note.className = 'notice warn small';
   box.replaceChildren(wrap, note);
 }
-['opAmount', 'opEntry', 'opTarget', 'opTargetPrice', 'opStop', 'opSpacing', 'opMode'].forEach((id) => $(id).addEventListener('input', renderPlan));
-$('opSymbol').addEventListener('change', loadOpPrice);
-$('opSymbol').addEventListener('input', () => { if (market.includes($('opSymbol').value.trim().toUpperCase())) loadOpPrice(); });
+['opAmount', 'opEntry', 'opTarget', 'opTargetPrice', 'opStop', 'opSpacing', 'opMode', 'opUnit'].forEach((id) => $(id).addEventListener('input', renderPlan));
+$('opSymbol').addEventListener('change', () => loadOpPrice());
+$('opSymbol').addEventListener('input', () => { if (opPair()) loadOpPrice(); else { opLabels(); renderPlan(); } });
+setInterval(() => { if (view === 'panel' && opPriceSymbol) loadOpPrice(true); }, 20000);
 $('newOperation').addEventListener('submit', (event) => {
   event.preventDefault(); $('opOpen').disabled = true;
   act(async () => {
-    await api('/api/operations', { symbol: $('opSymbol').value, amount: Number($('opAmount').value), targetPct: Number($('opTarget').value), stopPct: Number($('opStop').value), mode: $('opMode').value, spacingPct: Number($('opSpacing').value), targetPrice: Number($('opTargetPrice').value) || null });
+    await api('/api/operations', { symbol: $('opSymbol').value, amount: $('opUnit').value === 'base' ? Number($('opAmount').value) * (opPrice || Number($('opEntry').value)) : Number($('opAmount').value), targetPct: Number($('opTarget').value), stopPct: Number($('opStop').value), mode: $('opMode').value, spacingPct: Number($('opSpacing').value), targetPrice: Number($('opTargetPrice').value) || null });
     $('opSymbol').value = ''; $('opTargetPrice').value = ''; opPriceSymbol = null; $('opPlan').replaceChildren(); message('Operação aberta.'); setTimeout(() => { if ($('message').textContent === 'Operação aberta.') message(''); }, 4000);
   }).finally(() => { $('opOpen').disabled = false; });
 });
