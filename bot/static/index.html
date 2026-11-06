@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bot de Trading</title>
+<style>
+:root{--bg:#0F1419;--card:#151C24;--raised:#1C2530;--line:#3B4A5A;--text:#E8EDF2;--muted:#A9B6C3;--blue:#7CC0FF;--orange:#FFB454;--warn-bg:#3A2C12;--warn:#FFC46B}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,"Segoe UI",system-ui,sans-serif}
+.shell{display:flex;flex-wrap:wrap;min-height:100vh}
+nav{flex:1 1 200px;background:var(--card);padding:24px 16px;display:flex;flex-direction:column;gap:6px}
+nav strong{font-size:19px;margin:0 12px 16px}
+.tab{min-height:44px;padding:0 12px;border:0;border-radius:8px;background:transparent;color:var(--text);font:500 15px inherit;font-family:inherit;text-align:left;cursor:pointer}
+.tab[aria-current=page]{background:#263442}
+main{flex:999 1 560px;min-width:0;padding:24px;display:flex;flex-direction:column;gap:20px}
+h1{margin:0;font-size:26px;font-weight:600}h2{margin:0 0 12px;font-size:16px;font-weight:600}
+p{margin:0}.muted{color:var(--muted)}.small{font-size:13px}
+.top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.badge{padding:8px 12px;border-radius:8px;background:var(--warn-bg);color:var(--warn);font-size:14px;font-weight:600}
+.card{background:var(--card);border-radius:10px;padding:20px;min-width:0}
+.btn{min-height:44px;padding:0 16px;border:1px solid var(--line);border-radius:8px;background:var(--raised);color:var(--text);font:600 14px inherit;font-family:inherit;cursor:pointer}
+.btn.primary{background:var(--blue);border-color:var(--blue);color:#07233B}
+.btn.danger{background:var(--orange);border-color:var(--orange);color:#241600}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn:focus-visible,.tab:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.kpi strong{display:block;font-size:20px;font-weight:600;margin-top:6px}
+.split{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.grow{flex:999 1 480px;min-width:0}.side{flex:1 1 300px;min-width:0}
+.form{display:flex;flex-direction:column;gap:16px}
+label{display:block;font-size:14px}.row{display:flex;justify-content:space-between;gap:12px}
+input[type=range]{width:100%;min-height:36px;accent-color:var(--blue)}
+input[type=text],input[type=password],select{width:100%;min-height:44px;margin-top:6px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--raised);color:var(--text);font:15px inherit;font-family:inherit}
+.box{overflow-x:auto}table{width:100%;min-width:480px;border-collapse:collapse;font-size:14px;text-align:left}
+th{color:var(--muted);font-weight:500}th,td{padding:8px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--raised);color:var(--text);font:500 14px inherit;font-family:inherit;cursor:pointer}
+.chip[aria-pressed=true]{background:#263442;border-color:var(--blue)}
+.tip{position:absolute;pointer-events:none;background:var(--raised);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:13px;white-space:nowrap;transform:translate(-50%,-110%)}
+.notice{padding:14px 16px;border-radius:8px;background:var(--raised)}.notice.warn{background:var(--warn-bg);color:var(--warn)}
+svg{display:block;width:100%;height:auto}
+[hidden]{display:none!important}
+ol{margin:0;padding-left:20px}
+</style>
+</head>
+<body data-token="__TOKEN__">
+<div class="shell">
+<nav aria-label="Menu principal">
+  <strong>Bot de Trading</strong>
+  <button class="tab" data-view="connect" id="connectTab">Conectar</button>
+  <button class="tab" data-view="studio">Estratégia e risco</button>
+  <button class="tab" data-view="panel">Painel</button>
+  <button class="tab" data-view="history">Histórico</button>
+</nav>
+<main>
+  <p id="message" class="notice" role="status" hidden></p>
+
+  <section id="connect" class="form" hidden>
+    <div class="top"><h1>Conecte sua conta de teste</h1><span class="badge">TESTNET, saldo fictício</span></div>
+    <div class="card form" style="max-width:640px">
+      <ol>
+        <li>Abra <a href="https://testnet.binance.vision" target="_blank" rel="noreferrer" style="color:var(--blue)">testnet.binance.vision</a> e entre com o GitHub.</li>
+        <li>Gere uma chave do tipo HMAC.</li>
+        <li>Cole a API Key e a Secret Key aqui.</li>
+      </ol>
+      <label>API Key<input id="apiKey" type="text" autocomplete="off" spellcheck="false"></label>
+      <label>Secret Key<input id="apiSecret" type="password" autocomplete="off"></label>
+      <div class="actions"><button id="saveKeys" class="btn primary">Conectar</button><span id="keysResult" role="status"></span></div>
+      <p class="muted small">As chaves ficam só no arquivo .env deste computador. Nunca use chaves da sua conta real.</p>
+    </div>
+  </section>
+
+  <section id="studio" class="form" hidden>
+    <div class="top"><div><h1>Estratégia e risco</h1><p class="muted">Ajuste, veja no gráfico e teste antes de ligar.</p></div><span class="badge">TESTNET</span></div>
+    <div class="split">
+      <div class="side card form">
+        <div class="form" style="gap:8px">
+          <label for="pairSearch">Pares para operar (até <span id="maxPairs">8</span>)</label>
+          <div id="selectedPairs" class="chips"></div>
+          <input id="pairSearch" type="text" placeholder="Buscar: ETH, SOL..." autocomplete="off" spellcheck="false">
+          <div id="pairResults" class="chips"></div>
+          <p class="muted small">Só pares em USDT. O capital é dividido igualmente entre eles.</p>
+        </div>
+        <label>Estratégia<select id="strategy"><option value="ranges">Máximas e mínimas</option><option value="sma">Médias móveis</option></select></label>
+        <label>Tempo gráfico<select id="timeframe"><option value="1h">1 hora</option><option value="4h">4 horas</option><option value="1d">1 dia</option></select></label>
+        <div id="rangeFields" class="form">
+          <label><span class="row"><span>Candles da região</span><b id="lookbackOut"></b></span><input id="lookback" type="range" min="20" max="120" step="10"></label>
+          <label><span class="row"><span>Zona de compra</span><b id="zoneOut"></b></span><input id="zone" type="range" min="5" max="30" step="5"></label>
+          <label><span class="row"><span>Ganho mínimo por risco</span><b id="rrOut"></b></span><input id="rr" type="range" min="1" max="3" step="0.5"></label>
+        </div>
+        <div id="smaFields" class="form">
+          <label><span class="row"><span>Média curta</span><b id="fastOut"></b></span><input id="fast" type="range" min="5" max="50" step="5"></label>
+          <label><span class="row"><span>Média longa</span><b id="slowOut"></b></span><input id="slow" type="range" min="20" max="200" step="10"></label>
+          <label><span class="row"><span>Stop</span><b id="stopOut"></b></span><input id="stop" type="range" min="1" max="10" step="0.5"></label>
+        </div>
+        <h2 style="margin:8px 0 0">Gestão de risco</h2>
+        <label><span class="row"><span>Capital do bot</span><b id="capitalOut"></b></span><input id="capital" type="range" min="100" max="5000" step="100"></label>
+        <label><span class="row"><span>Risco por operação</span><b id="riskOut"></b></span><input id="risk" type="range" min="0.25" max="2" step="0.25"></label>
+        <label><span class="row"><span>Posição máxima</span><b id="posOut"></b></span><input id="pos" type="range" min="5" max="100" step="5"></label>
+        <label><span class="row"><span>Parar após perder no dia</span><b id="dayOut"></b></span><input id="day" type="range" min="1" max="5" step="0.5"></label>
+      </div>
+      <div class="grow form">
+        <div class="card"><h2>Candles reais recentes</h2><div id="chartPairs" class="chips" style="margin-bottom:12px"></div><div id="previewChart"><p class="muted">Carregando gráfico...</p></div><p class="muted small" style="margin-top:8px">Os triângulos azuis mostram onde esta configuração compraria.</p></div>
+        <div class="notice" id="summary"></div>
+        <div class="card">
+          <div class="top"><h2 style="margin:0">Resultado do teste</h2><button id="test" class="btn primary">Testar estratégia</button></div>
+          <div id="results" style="margin-top:12px"><p class="muted">Teste esta configuração antes de ligar o bot.</p></div>
+        </div>
+        <div class="actions" style="justify-content:flex-end"><button id="start" class="btn" disabled>Ligar na testnet</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="panel" class="form" hidden>
+    <div class="top">
+      <div><h1 id="panelTitle">Painel</h1><p class="muted">Testnet, saldo fictício</p></div>
+      <div class="actions">
+        <span class="badge">TESTNET</span>
+        <button id="pause" class="btn" disabled>Pausar novas entradas</button>
+        <button id="off" class="btn" disabled>Desligar bot</button>
+        <button id="emergency" class="btn danger" disabled>Parar e vender</button>
+      </div>
+    </div>
+    <div id="panelPairs" class="chips"></div>
+    <div class="kpis">
+      <div class="card kpi"><span class="muted small">Situação</span><strong id="kStatus">Desligado</strong></div>
+      <div class="card kpi"><span class="muted small">Capital total</span><strong id="kEquity">-</strong></div>
+      <div class="card kpi"><span class="muted small">Resultado total</span><strong id="kResult">-</strong></div>
+      <div class="card kpi"><span class="muted small" id="kPriceLabel">Preço</span><strong id="kPrice">-</strong></div>
+    </div>
+    <div class="split">
+      <div class="grow card"><h2>Preço, regiões e proteção</h2><div id="liveChart"><p class="muted">O gráfico aparece com o bot ligado.</p></div></div>
+      <div class="side card"><h2>Posições abertas</h2><div id="position"><p class="muted">Nenhuma posição aberta.</p></div></div>
+    </div>
+    <div id="halted" class="notice warn" hidden></div>
+    <div class="card"><h2>Últimas ordens</h2><div class="box"><table><thead><tr><th>Par</th><th>Lado</th><th>Quantidade</th><th>Preço</th><th>Status</th><th>Motivo</th></tr></thead><tbody id="orders"></tbody></table></div></div>
+  </section>
+
+  <section id="history" class="form" hidden>
+    <div class="top">
+      <div><h1>Histórico</h1><p class="muted">Operações fechadas na testnet, já com taxas. Não representa dinheiro real.</p></div>
+      <div class="actions">
+        <label>Par<select id="hPair"><option value="">Todos</option></select></label>
+        <label>Período<select id="hDays"><option value="30">30 dias</option><option value="90">90 dias</option><option value="365">1 ano</option><option value="0" selected>Tudo</option></select></label>
+        <button id="hCsv" class="btn" style="align-self:flex-end">Baixar CSV</button>
+      </div>
+    </div>
+    <p id="hEmpty" class="notice" hidden></p>
+    <div id="hBody" class="form">
+      <div class="kpis">
+        <div class="card kpi"><span class="muted small">Resultado</span><strong id="hPnl">-</strong></div>
+        <div class="card kpi"><span class="muted small">Operações</span><strong id="hCount">-</strong></div>
+        <div class="card kpi"><span class="muted small">Acerto</span><strong id="hWin">-</strong></div>
+        <div class="card kpi"><span class="muted small">Fator de lucro</span><strong id="hFactor">-</strong></div>
+        <div class="card kpi"><span class="muted small">Maior queda</span><strong id="hDraw">-</strong></div>
+        <div class="card kpi"><span class="muted small">Taxas pagas</span><strong id="hFees">-</strong></div>
+      </div>
+      <div class="card"><h2>Resultado acumulado (USDT)</h2><div id="hCurve" style="position:relative"></div></div>
+      <div class="card"><h2>Total vendido por mês (USDT)</h2><div id="hMonths" style="position:relative"></div><p class="muted small" style="margin-top:8px">Cada venda pode contar para o imposto, mesmo sem converter para reais. Para declarar, é preciso converter os valores para reais na data de cada operação.</p></div>
+      <div class="card"><h2>Por par</h2><div class="box"><table><thead><tr><th>Par</th><th>Operações</th><th>Resultado</th><th>Acerto</th><th>Taxas</th></tr></thead><tbody id="hPairs"></tbody></table></div></div>
+      <div class="card"><h2>Últimas operações</h2><div class="box" style="max-height:420px;overflow-y:auto"><table><thead><tr><th>Data (UTC)</th><th>Par</th><th>Entrada</th><th>Saída</th><th>Resultado</th><th>%</th><th>Motivo</th></tr></thead><tbody id="hTrades"></tbody></table></div></div>
+      <p id="hTests" class="muted small"></p>
+    </div>
+  </section>
+</main>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const token = document.body.dataset.token;
+const num = (v, d = 2) => Number(v).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+const short = (v) => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
+let state = null, view = null, formReady = false, saveTimer = null, confirmTimer = null;
+let pairs = [], market = [], chartPair = null, panelPair = null;
+const GREEN = '#22C55E', RED = '#EF4444';
+
+async function api(path, body) {
+  const options = { method: body === undefined ? 'GET' : 'POST', headers: { 'X-Bot-Token': token } };
+  if (body !== undefined) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); }
+  const response = await fetch(path, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || 'Falha na comunicação');
+  return data;
+}
+function show(name) {
+  view = name;
+  for (const id of ['connect', 'studio', 'panel', 'history']) $(id).hidden = id !== name;
+  document.querySelectorAll('.tab').forEach((b) => b.dataset.view === name ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'));
+  if (name === 'studio' && formReady) preview();
+  if (name === 'history') loadHistory();
+}
+function message(text, warn) {
+  $('message').hidden = !text; $('message').textContent = text || '';
+  $('message').className = 'notice' + (warn ? ' warn' : '');
+}
+const sliders = {
+  lookback: ['lookback', 1, (v) => short(v)], zone: ['zone_pct', 100, (v) => short(v) + '% da região'], rr: ['min_reward_risk', 1, (v) => short(v) + ' vezes'],
+  fast: ['fast_sma', 1, (v) => short(v)], slow: ['slow_sma', 1, (v) => short(v)], stop: ['stop_loss_pct', 100, (v) => short(v) + '%'],
+  capital: ['capital_usdt', 1, (v) => short(v) + ' USDT'], risk: ['risk_per_trade', 100, (v) => short(v) + '%'], pos: ['max_position_pct', 100, (v) => short(v) + '%'], day: ['max_daily_loss_pct', 100, (v) => short(v) + '%'],
+};
+function fillForm(s) {
+  $('strategy').value = s.strategy; $('timeframe').value = s.timeframe;
+  pairs = s.symbols.split(',').map((p) => p.trim()).filter(Boolean); renderPairs();
+  for (const [id, [key, scale]] of Object.entries(sliders)) $(id).value = s[key] * scale;
+  labels(); formReady = true;
+}
+function values() {
+  const out = { symbols: pairs.join(','), strategy: $('strategy').value, timeframe: $('timeframe').value };
+  for (const [id, [key, scale]] of Object.entries(sliders)) out[key] = Number($(id).value) / scale;
+  return out;
+}
+function labels() {
+  for (const [id, [, , format]] of Object.entries(sliders)) $(id + 'Out').textContent = format($(id).value);
+  const sma = $('strategy').value === 'sma';
+  $('rangeFields').hidden = sma; $('smaFields').hidden = !sma;
+  const v = values(), loss = v.capital_usdt * v.risk_per_trade, day = v.capital_usdt * v.max_daily_loss_pct;
+  const count = Math.max(pairs.length, 1), slice = v.capital_usdt / count, order = slice * v.max_position_pct;
+  $('summary').textContent = `Com ${short(v.capital_usdt)} USDT em ${count} ${count > 1 ? 'pares' : 'par'}, cada par fica com ${short(slice)} USDT e arrisca até ${short(slice * v.risk_per_trade)} USDT por operação. Cada par para ao perder ${short(slice * v.max_daily_loss_pct)} USDT no dia. Criptos costumam cair juntas, e em queda muito rápida a perda pode ser maior.`;
+  $('summary').className = 'notice';
+  if (order < 10) { $('summary').textContent += ` Atenção: cada ordem teria até ${short(order)} USDT e pode ficar abaixo do mínimo da exchange. Use menos pares ou mais capital.`; $('summary').className = 'notice warn'; }
+}
+function changed() {
+  labels(); clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try { await api('/api/settings', values()); await refresh(); preview(); } catch (e) { message(e.message, true); }
+  }, 400);
+}
+function chart(candles, levels, points) {
+  const width = 800, height = 320, pad = 26;
+  const prices = candles.flatMap((c) => [c[1], c[2]]).concat(levels.flatMap((l) => l.values || [l.value])).filter((v) => v !== null && v !== undefined);
+  const low = Math.min(...prices), high = Math.max(...prices), span = high - low || 1;
+  const slot = width / Math.max(candles.length, 1), x = (i) => i * slot + slot / 2, y = (v) => pad + (high - v) / span * (height - 2 * pad);
+  const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height + 18}`); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'Gráfico de candles com níveis de preço');
+  const add = (tag, attrs, text) => { const el = document.createElementNS(ns, tag); for (const k in attrs) el.setAttribute(k, attrs[k]); if (text) el.textContent = text; svg.appendChild(el); };
+  candles.forEach(([open, top, bottom, close], i) => {
+    const color = close >= open ? GREEN : RED, body = Math.max(slot * 0.65, 1.5);
+    add('line', { x1: x(i), x2: x(i), y1: y(top), y2: y(bottom), stroke: color, 'stroke-width': 1 });
+    add('rect', { x: x(i) - body / 2, width: body, y: y(Math.max(open, close)), height: Math.max(Math.abs(y(open) - y(close)), 1), fill: color });
+  });
+  for (const level of levels) {
+    if (level.values) {
+      const pts = level.values.map((v, i) => v === null ? null : `${x(i)},${y(v)}`).filter(Boolean).join(' ');
+      if (pts) add('polyline', { points: pts, fill: 'none', stroke: level.color, 'stroke-width': 1.5, 'stroke-dasharray': level.dash || '' });
+    } else if (level.value !== null && level.value !== undefined) {
+      add('line', { x1: 0, x2: width, y1: y(level.value), y2: y(level.value), stroke: level.color, 'stroke-dasharray': level.dash || '' });
+      add('text', { x: 6, y: y(level.value) - 5, fill: level.color, 'font-size': 13 }, `${level.name} ${num(level.value)}`);
+    }
+  }
+  (points || []).forEach((on, i) => { if (on) add('path', { d: `M${x(i)} ${y(candles[i][2]) + 6} l-7 12 h14 z`, fill: '#7CC0FF' }); });
+  return svg;
+}
+function chips(box, names, active, pick) {
+  box.replaceChildren(...names.map((name) => {
+    const b = document.createElement('button'); b.className = 'chip'; b.textContent = name;
+    b.setAttribute('aria-pressed', String(name === active)); b.addEventListener('click', () => pick(name)); return b;
+  }));
+}
+function renderPairs() {
+  const locked = state && state.running;
+  $('selectedPairs').replaceChildren(...pairs.map((name) => {
+    const b = document.createElement('button'); b.className = 'chip'; b.textContent = `${name} ×`; b.disabled = locked || pairs.length === 1;
+    b.setAttribute('aria-label', `Remover ${name}`);
+    b.addEventListener('click', () => { pairs = pairs.filter((p) => p !== name); renderPairs(); changed(); }); return b;
+  }));
+  if (!pairs.includes(chartPair)) chartPair = pairs[0];
+  chips($('chartPairs'), pairs, chartPair, (name) => { chartPair = name; renderPairs(); preview(); });
+  const term = $('pairSearch').value.trim().toUpperCase();
+  const found = term ? market.filter((name) => name.includes(term) && !pairs.includes(name)).slice(0, 8) : [];
+  chips($('pairResults'), found, null, (name) => {
+    if (pairs.length >= state.maxSymbols) { message(`Escolha no máximo ${state.maxSymbols} pares.`, true); return; }
+    pairs.push(name); chartPair = name; $('pairSearch').value = ''; renderPairs(); changed();
+  });
+  if (term && !market.length) $('pairResults').textContent = 'Lista de pares indisponível no momento.';
+}
+async function preview() {
+  try {
+    const data = await api('/api/preview', { ...values(), symbol: chartPair });
+    $('previewChart').replaceChildren(chart(data.candles, [
+      { name: 'Resistência', values: data.resistance, color: '#E8EDF2', dash: '6 6' },
+      { name: 'Suporte', values: data.support, color: '#7CC0FF', dash: '6 6' },
+    ], data.buys));
+  } catch (e) { $('previewChart').textContent = e.message; }
+}
+function renderResults() {
+  const v = state.validation, box = $('results'), current = state.validationCurrent;
+  $('test').disabled = v.state === 'running' || state.running; $('test').textContent = v.state === 'running' ? 'Testando...' : 'Testar estratégia';
+  if (v.state === 'running') { box.textContent = 'Baixando candles de cada par e calculando. Isso pode levar alguns minutos.'; return; }
+  if (v.state === 'error') { box.textContent = v.message; return; }
+  if (v.state !== 'done' || !current) { box.innerHTML = '<p class="muted">Teste esta configuração antes de ligar o bot.</p>'; return; }
+  const table = document.createElement('table');
+  table.innerHTML = '<thead><tr><th>Par</th><th>Retorno 70%</th><th>Retorno 30%</th><th>Segurar, 30%</th><th>Operações</th><th>Resultado</th></tr></thead>';
+  const body = table.createTBody();
+  for (const pair of v.pairs) {
+    const cells = pair.error ? [pair.symbol, '-', '-', '-', '-', 'Sem dados'] : [
+      pair.symbol, `${num(pair.first.return_pct)}%`, `${num(pair.second.return_pct)}%`, `${num(pair.second.matched_hold_pct)}%`,
+      pair.first.trades + pair.second.trades, pair.approved ? 'Aprovado' : 'Reprovado'];
+    const row = body.insertRow(); cells.forEach((t) => { row.insertCell().textContent = t; });
+  }
+  const total = body.insertRow(); ['Média', `${num(v.firstReturn)}%`, `${num(v.secondReturn)}%`, '', '', ''].forEach((t) => { total.insertCell().textContent = t; });
+  const wrap = document.createElement('div'); wrap.className = 'box'; wrap.appendChild(table);
+  const verdict = document.createElement('p'); verdict.className = 'notice' + (v.approved ? '' : ' warn'); verdict.style.marginTop = '12px';
+  verdict.textContent = v.approved
+    ? 'Todos os pares foram aprovados. Isso não garante lucro. Trocar pares e ajustes até aprovar deixa o teste otimista.'
+    : 'Há pares reprovados: faltou lucro, operações suficientes ou resultado melhor que segurar o ativo. Escolher só os pares que passaram também favorece a sorte. Se ligar, use apenas para testar o bot.';
+  box.replaceChildren(wrap, verdict);
+}
+function renderStart() {
+  const v = state.validation, tested = v.state === 'done' && state.validationCurrent;
+  $('start').disabled = state.running || !tested || !state.hasKeys;
+  $('start').className = 'btn' + (tested && v.approved ? ' primary' : '');
+  $('start').textContent = state.running ? 'Bot ligado' : tested && !v.approved ? 'Ligar mesmo assim na testnet' : 'Ligar na testnet';
+}
+function renderPanel() {
+  const all = Object.values(state.snapshots), names = all.map((d) => d.symbol);
+  if (!names.includes(panelPair)) panelPair = names[0] || null;
+  const data = state.snapshots[panelPair], open = all.filter((d) => d.position);
+  $('pause').disabled = $('off').disabled = $('emergency').disabled = !state.running;
+  $('pause').textContent = state.paused ? 'Retomar entradas' : 'Pausar novas entradas';
+  $('panelTitle').textContent = `${state.settings.symbols.split(',').length} ${state.settings.symbols.includes(',') ? 'pares' : 'par'} · ${state.settings.timeframe}`;
+  $('kStatus').textContent = !state.running ? 'Desligado' : state.paused ? 'Entradas pausadas' : !all.length ? 'Iniciando' : open.length ? `${open.length} em operação` : 'Aguardando sinal';
+  chips($('panelPairs'), names, panelPair, (name) => { panelPair = name; renderPanel(); });
+  const stopped = Object.entries(state.halted);
+  $('halted').hidden = !stopped.length; $('halted').textContent = stopped.map(([k, v]) => `${k}: ${v}`).join(' | ');
+  if (!data) return;
+  const equity = all.reduce((s, d) => s + d.equity, 0), result = equity - all.reduce((s, d) => s + d.capital, 0);
+  $('kEquity').textContent = `${num(equity)} USDT`;
+  $('kResult').textContent = `${result >= 0 ? '+' : ''}${num(result)} USDT`;
+  $('kResult').style.color = result >= 0 ? GREEN : RED;
+  $('kPriceLabel').textContent = `Preço ${panelPair}`;
+  $('kPrice').textContent = data.price ? num(data.price) : '-';
+  if (data.candles.length) {
+    const position = data.position, levels = [{ name: 'Resistência', value: data.resistance, color: '#E8EDF2', dash: '6 6' }, { name: 'Suporte', value: data.support, color: '#7CC0FF', dash: '6 6' }];
+    if (position) levels.push({ name: 'Alvo', value: position.target, color: GREEN }, { name: 'Entrada', value: position.entry_price, color: '#E8EDF2', dash: '2 5' }, { name: 'Stop', value: position.stop, color: RED });
+    $('liveChart').replaceChildren(chart(data.candles.slice(-120), levels));
+  }
+  const box = $('position');
+  if (!open.length) box.innerHTML = '<p class="muted">Nenhuma posição aberta.</p>';
+  else box.replaceChildren(...open.flatMap((d) => {
+    const p = d.position, risk = p.qty * (p.entry_price - p.stop), gain = p.qty * (p.target - p.entry_price);
+    return [[d.symbol, p.oco_id ? 'OCO ativo' : 'Aguardando OCO'], ['Quantidade', num(p.qty, 5)], ['Risco até o stop', `${num(risk)} USDT`], ['Ganho no alvo', `${num(gain)} USDT`]].map(([a, b], i) => {
+      const row = document.createElement('p'); row.className = 'row'; if (i === 0) row.style.marginTop = '8px';
+      const left = document.createElement(i === 0 ? 'strong' : 'span'); if (i) left.className = 'muted'; left.textContent = a;
+      const right = document.createElement('span'); right.textContent = b; row.append(left, right); return row;
+    });
+  }));
+  const sides = { buy: 'Compra', sell: 'Venda' }, statuses = { filled: 'Executada', failed: 'Falhou', pending: 'Pendente' };
+  const orders = all.flatMap((d) => d.orders).sort((a, b) => b.created_at - a.created_at).slice(0, 10);
+  $('orders').replaceChildren(...orders.map((o) => { const row = document.createElement('tr'); [o.symbol, sides[o.side] || o.side, num(o.amount, 5), o.avg_price ? num(o.avg_price) : '-', statuses[o.status] || o.status, o.reason].forEach((t) => { const td = document.createElement('td'); td.textContent = t; row.appendChild(td); }); return row; }));
+}
+function tableRows(body, rows) {
+  body.replaceChildren(...rows.map((cells) => { const tr = document.createElement('tr'); cells.forEach((t) => { const td = document.createElement('td'); td.textContent = t; tr.appendChild(td); }); return tr; }));
+}
+function svgBase(label) {
+  const ns = 'http://www.w3.org/2000/svg', svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 800 260'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', label);
+  const add = (tag, attrs, text) => { const el = document.createElementNS(ns, tag); for (const k in attrs) el.setAttribute(k, attrs[k]); if (text !== undefined) el.textContent = text; svg.appendChild(el); return el; };
+  return { svg, add };
+}
+function tooltip(box, svg, count, position, text) {
+  const tip = document.createElement('div'); tip.className = 'tip'; tip.hidden = true;
+  svg.addEventListener('pointermove', (event) => {
+    const rect = svg.getBoundingClientRect(), i = Math.max(0, Math.min(count - 1, Math.round((event.clientX - rect.left) / rect.width * 800 / (800 / Math.max(count, 1)) - 0.5)));
+    const [x, y] = position(i); tip.hidden = false; tip.textContent = text(i);
+    tip.style.left = `${Math.max(70, Math.min(rect.width - 70, x / 800 * rect.width))}px`; tip.style.top = `${y / 260 * rect.height}px`;
+  });
+  svg.addEventListener('pointerleave', () => { tip.hidden = true; });
+  box.replaceChildren(svg, tip);
+}
+function curveChart(points) {
+  const values = points.map((p) => p.pnl).concat(0), low = Math.min(...values), high = Math.max(...values), span = high - low || 1;
+  const x = (i) => points.length === 1 ? 400 : 8 + i * 784 / (points.length - 1), y = (v) => 20 + (high - v) / span * 220;
+  const { svg, add } = svgBase(`Resultado acumulado termina em ${num(points[points.length - 1].pnl)} USDT`);
+  add('line', { x1: 0, x2: 800, y1: y(0), y2: y(0), stroke: '#3B4A5A' });
+  add('text', { x: 4, y: y(0) - 6, fill: '#A9B6C3', 'font-size': 13 }, '0');
+  add('polyline', { points: points.map((p, i) => `${x(i)},${y(p.pnl)}`).join(' '), fill: 'none', stroke: '#7CC0FF', 'stroke-width': 2, 'stroke-linejoin': 'round' });
+  const last = points.length - 1; add('circle', { cx: x(last), cy: y(points[last].pnl), r: 4, fill: '#7CC0FF', stroke: '#151C24', 'stroke-width': 2 });
+  tooltip($('hCurve'), svg, points.length, (i) => [x(i), y(points[i].pnl)], (i) => `${points[i].time}: ${num(points[i].pnl)} USDT`);
+}
+function monthChart(months) {
+  const high = Math.max(...months.map((m) => m.sold), 1), slot = 800 / months.length, width = Math.min(slot - 4, 48);
+  const { svg, add } = svgBase('Total vendido por mês');
+  add('line', { x1: 0, x2: 800, y1: 232, y2: 232, stroke: '#3B4A5A' });
+  months.forEach((m, i) => {
+    const h = Math.max(m.sold / high * 200, 2), cx = i * slot + slot / 2;
+    add('path', { d: `M${cx - width / 2} 232 v${-(h - 4)} q0 -4 4 -4 h${width - 8} q4 0 4 4 v${h - 4} z`, fill: '#7CC0FF' });
+    if (months.length <= 12) add('text', { x: cx, y: 252, fill: '#A9B6C3', 'font-size': 13, 'text-anchor': 'middle' }, m.month);
+  });
+  tooltip($('hMonths'), svg, months.length, (i) => [i * slot + slot / 2, 232 - Math.max(months[i].sold / high * 200, 2)], (i) => `${months[i].month}: ${num(months[i].sold)} USDT`);
+}
+function historyQuery() { return `symbol=${encodeURIComponent($('hPair').value)}&days=${$('hDays').value}`; }
+async function loadHistory() {
+  let h;
+  try { h = await api(`/api/history?${historyQuery()}`); } catch (e) { message(e.message, true); return; }
+  const current = $('hPair').value;
+  $('hPair').replaceChildren(new Option('Todos', ''), ...(h.symbols || []).map((s) => new Option(s, s))); $('hPair').value = current;
+  $('hBody').hidden = !h.count; $('hEmpty').hidden = !!h.count;
+  $('hCsv').disabled = !h.count;
+  $('hEmpty').textContent = !h.available ? 'Banco de histórico indisponível. Veja os registros do bot.' : 'Ainda não há operações fechadas neste filtro.';
+  if (!h.count) return;
+  const usdt = (v) => `${v >= 0 ? '+' : ''}${num(v)} USDT`;
+  $('hPnl').textContent = usdt(h.pnl); $('hPnl').style.color = h.pnl >= 0 ? GREEN : RED;
+  $('hCount').textContent = h.count; $('hWin').textContent = `${num(h.winRate, 1)}%`;
+  $('hFactor').textContent = h.profitFactor === null ? '-' : num(h.profitFactor);
+  $('hDraw').textContent = `${num(h.maxDrawdown)} USDT`; $('hFees').textContent = `${num(h.fees)} USDT`;
+  curveChart(h.curve); monthChart(h.monthly);
+  tableRows($('hPairs'), h.bySymbol.map((p) => [p.symbol, p.count, usdt(p.pnl), `${num(p.winRate, 1)}%`, `${num(p.fees)} USDT`]));
+  tableRows($('hTrades'), h.trades.map((t) => [t.closed_at.replace('T', ' ').slice(0, 16), t.symbol, num(t.entry_price), num(t.exit_price), usdt(t.pnl), `${num(t.pnl_pct)}%`, t.exit_reason]));
+  $('hTests').textContent = `Testes de estratégia registrados: ${h.tests}. Quanto mais ajustes em cima dos mesmos dados, mais otimista fica o resultado.`;
+}
+async function refresh() {
+  state = await api('/api/state');
+  if (!formReady) fillForm(state.settings);
+  $('connectTab').hidden = state.hasKeys;
+  $('maxPairs').textContent = state.maxSymbols;
+  if (view === 'connect' && state.hasKeys && !$('keysResult').textContent) show('studio');
+  if (!view) show(!state.hasKeys ? 'connect' : state.running ? 'panel' : 'studio');
+  document.querySelectorAll('#studio input, #studio select').forEach((el) => { el.disabled = state.running; });
+  message(state.message, state.message && state.message.startsWith('Bot parado'));
+  renderResults(); renderStart(); renderPanel();
+}
+async function act(fn) { try { await fn(); await refresh(); } catch (e) { message(e.message, true); } }
+
+$('pairSearch').addEventListener('input', renderPairs);
+$('hPair').addEventListener('change', loadHistory); $('hDays').addEventListener('change', loadHistory);
+$('hCsv').addEventListener('click', async () => {
+  try {
+    const response = await fetch(`/api/history.csv?${historyQuery()}`, { headers: { 'X-Bot-Token': token } });
+    if (!response.ok) throw new Error('Não foi possível gerar o CSV');
+    const link = document.createElement('a'); link.href = URL.createObjectURL(await response.blob()); link.download = 'historico-trades.csv'; link.click(); URL.revokeObjectURL(link.href);
+  } catch (e) { message(e.message, true); }
+});
+api('/api/markets').then((r) => { market = r.symbols; renderPairs(); }).catch(() => {});
+document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
+document.querySelectorAll('#studio input[type=range], #studio select').forEach((el) => el.addEventListener('input', changed));
+$('saveKeys').addEventListener('click', async () => {
+  $('keysResult').textContent = 'Conectando...';
+  try {
+    const r = await api('/api/keys', { apiKey: $('apiKey').value, apiSecret: $('apiSecret').value });
+    $('apiKey').value = $('apiSecret').value = '';
+    $('keysResult').textContent = `Conectado. Saldo de teste: ${short(r.quote)} USDT.`;
+    await refresh(); setTimeout(() => show('studio'), 900);
+  } catch (e) { $('keysResult').textContent = e.message; }
+});
+$('test').addEventListener('click', () => act(async () => { clearTimeout(saveTimer); await api('/api/settings', values()); await api('/api/validate', {}); }));
+$('start').addEventListener('click', () => act(async () => { await api('/api/bot/start', {}); show('panel'); }));
+$('pause').addEventListener('click', () => act(() => api('/api/bot/pause', { paused: !state.paused })));
+$('off').addEventListener('click', () => act(() => api('/api/bot/stop', {})));
+$('emergency').addEventListener('click', () => {
+  const button = $('emergency');
+  if (button.dataset.armed !== '1') {
+    button.dataset.armed = '1'; button.textContent = 'Confirmar: vender agora';
+    confirmTimer = setTimeout(() => { button.dataset.armed = ''; button.textContent = 'Parar e vender'; }, 5000);
+    return;
+  }
+  clearTimeout(confirmTimer); button.dataset.armed = ''; button.textContent = 'Parar e vender';
+  act(() => api('/api/bot/emergency', {}));
+});
+refresh().catch((e) => message(e.message, true));
+setInterval(() => refresh().catch(() => message('O bot local não está respondendo. Veja se a janela dele continua aberta.', true)), 3000);
+</script>
+</body>
+</html>

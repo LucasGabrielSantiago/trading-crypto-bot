@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: trading
+      POSTGRES_USER: bot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-troque_esta_senha}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bot -d trading"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  bot:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      BIND_HOST: 0.0.0.0
+      OPEN_BROWSER: "0"
+      DATABASE_URL: postgresql+psycopg://bot:${POSTGRES_PASSWORD:-troque_esta_senha}@postgres:5432/trading
+      DB_PATH: /data/bot.db
+      KILL_FILE: /data/STOP
+      SETTINGS_PATH: /data/settings.json
+      ENV_FILE_PATH: /data/.env
+    volumes:
+      - bot_data:/data
+    ports:
+      - "127.0.0.1:8765:8765"
+
+volumes:
+  postgres_data:
+  bot_data:

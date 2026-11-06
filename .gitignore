@@ -1,0 +1,10 @@
+.env
+*.db
+__pycache__/
+.pytest_cache/
+.venv/
+STOP
+*.log
+*.db-*
+settings.json
+autostart.json
