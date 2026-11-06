@@ -14,6 +14,12 @@ from .strategy import BUY, DCA_WEIGHTS, HOLD, SELL, build_plan, dca_levels
 log = logging.getLogger("bot")
 
 
+def check_sale_price(target, price, symbol):
+    """Uma venda limitada abaixo do preço atual executaria na hora, sem querer."""
+    if not target or target <= price:
+        raise ValueError(f"O preço de venda de {symbol} precisa ficar acima do preço atual ({price:g})")
+
+
 class Halt(Exception):
     """Parada segura: exige análise antes de voltar a operar."""
 
@@ -198,17 +204,43 @@ class Bot:
             "filled": filled, "cost": cost, "average": cost / filled, "fees": fees,
         })
 
-    def open_manual(self, amount, target_pct, stop_pct):
+    def open_manual(self, amount, target_pct, stop_pct, target_price=None):
         """Abre uma operação pedida pelo usuário, protegida por OCO."""
         if self.position:
             raise ValueError(f"Já há uma operação aberta em {self.s.symbol}")
         price = self.ex.price()
         self.last_price = price
-        self.db.set("entry_plan", {"stop": price * (1 - stop_pct), "target": price * (1 + target_pct)})
+        target = target_price or price * (1 + target_pct)
+        check_sale_price(target, price, self.s.symbol)
+        self.db.set("entry_plan", {"stop": price * (1 - stop_pct), "target": target})
         self._submit("buy", amount / price, price, "operação manual")
         if not self.position:
             raise ValueError("A compra ficou abaixo do mínimo da exchange")
         self._protect()
+
+    def set_target(self, target):
+        """Troca o preço de venda de uma posição aberta, mantendo o stop."""
+        position = self.position
+        if not position:
+            raise ValueError(f"Não há operação aberta em {self.s.symbol}")
+        price = self.ex.price()
+        check_sale_price(target, price, self.s.symbol)
+        if position.get("stop") and target <= position["stop"]:
+            raise ValueError("O preço de venda precisa ficar acima do stop loss")
+        self._replace_sale(target)
+
+    def _replace_sale(self, target):
+        list_id = self.position.get("oco_id") or self.position.get("oco_pending")
+        if list_id:
+            self.ex.cancel_oco(list_id)
+            status = self.ex.oco_status(list_id)
+            if status:
+                self._book_oco(list_id, status)
+        position = self.position
+        if position:  # Se o alvo antigo executou no meio da troca, a posição já fechou.
+            position.update(target=target, oco_id=None, oco_pending=None)
+            self.db.set("position", position)
+            self._protect()
 
     def close_position(self):
         if not self.position:
@@ -415,6 +447,31 @@ class DcaBot(Bot):
     def _sync_exchange_orders(self):
         self._sync_sell()
 
+    def _replace_sale(self, target):
+        self._release_sell()
+        position = self.position
+        if position:
+            position.update(target=target)
+            self.db.set("position", position)
+            self._ensure_sell()
+
+    def _manage(self, price, equity):
+        """Repõe a venda no alvo, aplica os stops e faz as compras 2 e 3."""
+        position = self.position
+        if not position:
+            return
+        self._ensure_sell()
+        stop_pct = self.s.catastrophe_stop_pct
+        if position.get("stop") and price <= position["stop"]:
+            self._close("stop loss")
+        elif stop_pct and price <= position["entry_price"] * (1 - stop_pct):
+            self._close("stop de catástrofe")
+        else:
+            step = position.get("steps", 1)
+            if (step < len(DCA_WEIGHTS) and not self.pause_entries
+                    and position["floor"] <= price <= position["levels"][step - 1]):
+                self._add(price, equity, step)
+
     def _restore_protection(self):
         self._ensure_sell()
 
@@ -536,18 +593,8 @@ class DcaBot(Bot):
         self.last_price = price
         _, self.quote_free = self.ex.balances()
         self._sync_sell()
+        self._manage(price, self.equity(price))
         equity = self.equity(price)
-        position = self.position
-        if position:
-            self._ensure_sell()
-            stop_pct = self.s.catastrophe_stop_pct
-            if stop_pct and price <= position["entry_price"] * (1 - stop_pct):
-                self._close("stop de catástrofe")
-            else:
-                step = position.get("steps", 1)
-                if (step < len(DCA_WEIGHTS) and not self.pause_entries
-                        and position["floor"] <= price <= position["levels"][step - 1]):
-                    self._add(price, equity, step)
 
         candles = self.ex.closed_candles(self.s.warmup + 5, int(now * 1000))
         if len(candles) < self.s.warmup:
@@ -563,6 +610,42 @@ class DcaBot(Bot):
         latest = plan.iloc[-1]
         if latest["signal"] == BUY and not self.position and not self.pause_entries:
             self._start(price, equity, latest)
+
+
+class ManualDcaBot(DcaBot):
+    """Preço médio aberto pelo painel: níveis, alvo e stop escolhidos pelo usuário."""
+
+    manual = True
+
+    def open_manual(self, amount, target_pct, stop_pct, spacing_pct, target_price=None):
+        if self.position:
+            raise ValueError(f"Já há uma operação aberta em {self.s.symbol}")
+        price = self.ex.price()
+        self.last_price = price
+        _, self.quote_free = self.ex.balances()
+        target = target_price or price * (1 + target_pct)
+        check_sale_price(target, price, self.s.symbol)
+        levels = [price * (1 - spacing_pct), price * (1 - 2 * spacing_pct)]
+        stop = levels[1] * (1 - stop_pct)
+        self.db.set("entry_plan", {
+            "stop": stop, "target": target,
+            "extra": {"steps": 1, "levels": levels, "floor": stop, "manual": True},
+        })
+        self._submit("buy", amount * DCA_WEIGHTS[0] / price, price, "compra 1 de 3")
+        if not self.position:
+            raise ValueError("A compra ficou abaixo do mínimo da exchange")
+        self._ensure_sell()
+
+    def step(self):
+        if os.path.exists(self.s.kill_file):
+            self._close("parada de emergência")
+            raise Halt("parada de emergência concluída")
+        price = self.ex.price()
+        self.last_price = price
+        _, self.quote_free = self.ex.balances()
+        self._sync_sell()
+        self._manage(price, self.equity(price))
+        self.status = "operação manual" if self.position else "encerrada"
 
 
 class ManualBot(Bot):

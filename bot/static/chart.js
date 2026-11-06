@@ -98,6 +98,15 @@
       });
       this.candle = this.chart.addSeries(LC.CandlestickSeries, {
         upColor: GREEN, downColor: RED, wickUpColor: GREEN, wickDownColor: RED, borderVisible: false,
+        // A escala inclui alvo, stop e compras, para nenhuma linha ficar fora da tela.
+        autoscaleInfoProvider: (original) => {
+          const range = original();
+          const prices = this.levels.map((level) => level.value).filter((value) => value !== null && value !== undefined);
+          if (!range || !prices.length) return range;
+          const price = range.priceRange;
+          return { ...range, priceRange: {
+            minValue: Math.min(price.minValue, ...prices), maxValue: Math.max(price.maxValue, ...prices) } };
+        },
       }, 0);
       this.volume = this.chart.addSeries(LC.HistogramSeries, {
         priceFormat: { type: 'volume' }, priceScaleId: 'volume', lastValueVisible: false, priceLineVisible: false,

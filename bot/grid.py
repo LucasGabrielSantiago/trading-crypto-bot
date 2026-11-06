@@ -47,6 +47,9 @@ class GridBot(Bot):
                     "Se a testnet foi zerada, apague os arquivos bot_*.db."
                 )
 
+    def set_target(self, target):
+        raise ValueError("No grid, cada nível já tem sua própria venda")
+
     def _client_id(self, kind, index):
         return f"mvp-g{kind}-{index}-{int(self.clock() * 1000)}"
 

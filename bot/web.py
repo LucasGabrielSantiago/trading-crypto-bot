@@ -26,7 +26,7 @@ from .exchange import (
     Exchange, create_testnet_client, fetch_public_history, fetch_testnet_history,
 )
 from .grid import GridBot
-from .runner import DcaBot, Halt, ManualBot, Portfolio, make_bot
+from .runner import DcaBot, Halt, ManualBot, ManualDcaBot, Portfolio, make_bot
 from .storage import Storage
 from .strategy import BUY, build_plan
 
@@ -330,7 +330,8 @@ class Controller:
             bot = GridBot(pair, exchange_for(pair), db)
         elif position and position.get("levels"):
             pair = dataclasses.replace(pair, strategy="dca")
-            bot = DcaBot(pair, exchange_for(pair), db)
+            kind = ManualDcaBot if position.get("manual") else DcaBot
+            bot = kind(pair, exchange_for(pair), db)
         elif position:
             bot = ManualBot(pair, exchange_for(pair), db)
         else:
@@ -369,9 +370,13 @@ class Controller:
     def _save_manual(self, settings, pairs):
         self._manual_path(settings).write_text(json.dumps(pairs), encoding="utf-8")
 
-    def _manual_bot(self, settings, symbol, amount):
-        pair = dataclasses.replace(settings.for_symbol(symbol), capital_usdt=amount)
-        return ManualBot(pair, self.exchange_factory(pair), Storage(pair.db_path))
+    def _manual_bot(self, settings, symbol, amount, mode="simple"):
+        if isinstance(amount, dict):  # Formato novo: {"amount": 100, "mode": "dca"}.
+            amount, mode = amount["amount"], amount.get("mode", "simple")
+        kind = ManualDcaBot if mode == "dca" else ManualBot
+        pair = dataclasses.replace(settings.for_symbol(symbol), capital_usdt=amount,
+                                   strategy="dca" if mode == "dca" else settings.strategy)
+        return kind(pair, self.exchange_factory(pair), Storage(pair.db_path))
 
     def _command(self, action):
         portfolio = self.portfolio
@@ -388,11 +393,20 @@ class Controller:
         except TimeoutError as error:
             raise ValueError("O bot demorou para responder. Confira o painel.") from error
 
-    def open_operation(self, settings, symbol, amount, target_pct, stop_pct):
+    def open_operation(self, settings, symbol, amount, target_pct, stop_pct, mode="simple",
+                       spacing_pct=0.05, target_price=None):
         if not SYMBOL_PATTERN.fullmatch(symbol):
             raise ValueError("Par inválido")
         if amount < 10 or not 0 < stop_pct < 1 or target_pct <= 0:
             raise ValueError("Use pelo menos 10 USDT, com alvo e stop válidos")
+        if mode == "dca" and (amount < 40 or not 0.001 <= spacing_pct < 0.5):
+            raise ValueError("No preço médio, use pelo menos 40 USDT e distância entre 0,1% e 50%")
+
+        def start(bot):
+            if mode == "dca":
+                bot.open_manual(amount, target_pct, stop_pct, spacing_pct, target_price)
+            else:
+                bot.open_manual(amount, target_pct, stop_pct, target_price)
 
         def action(portfolio):
             bot = portfolio.bots.get(symbol)
@@ -401,18 +415,27 @@ class Controller:
             if bot is None:
                 if len(portfolio.bots) >= MAX_SYMBOLS:
                     raise ValueError(f"O limite é de {MAX_SYMBOLS} pares ao mesmo tempo")
-                bot = self._manual_bot(settings, symbol, amount)
+                bot = self._manual_bot(settings, symbol, amount, mode)
                 bot.startup()
                 # Entra no controle antes da compra: se o OCO falhar, a posição não fica órfã.
                 portfolio.add_bot(bot)
                 pairs = self._manual_pairs(settings)
-                pairs[symbol] = amount
+                pairs[symbol] = {"amount": amount, "mode": mode}
                 self._save_manual(settings, pairs)
-                bot.open_manual(amount, target_pct, stop_pct)
+                start(bot)
                 return
-            if isinstance(bot, (DcaBot, GridBot)):
-                raise ValueError(f"{symbol} já é controlado pela estratégia automática")
-            bot.open_manual(amount, target_pct, stop_pct)
+            if mode == "dca" or isinstance(bot, (DcaBot, GridBot)):
+                raise ValueError(f"{symbol} já é controlado por uma estratégia. Escolha outro par.")
+            bot.open_manual(amount, target_pct, stop_pct, target_price)
+
+        self._command(action)
+
+    def change_target(self, symbol, target):
+        def action(portfolio):
+            bot = portfolio.bots.get(symbol)
+            if bot is None:
+                raise ValueError(f"Não há operação em {symbol}")
+            bot.set_target(target)
 
         self._command(action)
 
@@ -696,9 +719,23 @@ def create_app(controller=None, token=None, settings_loader=load_settings):
                     settings_loader(), str(values.get("symbol", "")).strip().upper(),
                     float(values.get("amount", 0)), float(values.get("targetPct", 0)) / 100,
                     float(values.get("stopPct", 0)) / 100,
+                    "dca" if values.get("mode") == "dca" else "simple",
+                    float(values.get("spacingPct", 5)) / 100,
+                    float(values["targetPrice"]) if values.get("targetPrice") else None,
                 )
             except TypeError as error:
                 raise ValueError("Dados da operação inválidos") from error
+            return ok()
+        return guarded(action)
+
+    @app.post("/api/operations/target")
+    def operation_target(values: dict = Body(...)):
+        def action():
+            try:
+                price = float(values.get("price", 0))
+            except (TypeError, ValueError) as error:
+                raise ValueError("Preço de venda inválido") from error
+            controller.change_target(str(values.get("symbol", "")), price)
             return ok()
         return guarded(action)
 

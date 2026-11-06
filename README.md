@@ -12,7 +12,9 @@ para modo real, e o bot se recusa a iniciar se as rotas de negociação não for
   máximas e mínimas foi **reprovada** em BTC/USDT em 1h.
 - As estratégias são exemplos para estudo. Elas não são recomendação de investimento nem promessa de
   lucro.
-- O OCO, as ordens limitadas e as operações manuais ainda precisam de mais tempo de uso na testnet real.
+- O OCO, as ordens limitadas, as operações manuais e a troca do preço de venda ainda precisam de mais
+  tempo de uso na testnet real.
+- Testes automatizados: 143 passam no SQLite, e os de histórico também passam no PostgreSQL.
 
 ## Início rápido com Docker
 
@@ -237,8 +239,45 @@ quantidade, valor em ordens, preço e percentual. A lista de pares disponíveis 
 
 ## Operações no painel
 
-Com o bot ligado, **Nova operação** compra a mercado em um par e deixa alvo e stop na exchange. Ela
-pode usar um par fora da lista da estratégia, com uma operação por par e até 8 pares ao todo. Essas
+### Planejar e abrir uma operação
+
+Em **Painel > Nova operação**, escolha o par, a estratégia, o valor em USDT e as porcentagens. O
+preço de entrada vem preenchido com o preço atual da testnet e pode ser alterado para simular. A tabela
+mostra os preços e as quantidades antes de abrir.
+
+![Planejador de nova operação](docs/images/tela-nova-operacao.png)
+
+Exemplo com **Preço médio**, 100 USDT, entrada em 70 USDT, 5% entre compras, stop gain de 6% e stop
+loss de 3%:
+
+| Etapa | Preço | Valor | Quantidade |
+|---|---:|---:|---:|
+| Compra 1 (25%) | 70,00 | 25 USDT | 0,357 SOL |
+| Compra 2 (25%) | 66,50 | 25 USDT | 0,376 SOL |
+| Compra 3 (50%) | 63,00 | 50 USDT | 0,794 SOL |
+| Preço médio | 65,50 | 100 USDT | 1,527 SOL |
+| Stop gain | 74,20 | cerca de +13 USDT com as 3 compras | |
+| Stop loss | 61,11 | cerca de −7 USDT com as 3 compras | |
+
+Se preferir um preço exato de venda, preencha **Preço de venda**. Ele substitui o stop gain em
+porcentagem e fica fixo mesmo que a entrada real mude. Depois de aberta, cada posição tem o campo
+**Novo preço de venda**: o bot cancela a venda atual e envia outra no novo preço, mantendo o stop loss.
+O preço precisa ficar acima do preço atual e do stop loss. No Grid, cada nível já tem sua venda.
+
+![Alterar o preço de venda de uma posição aberta](docs/images/tela-alterar-venda.png)
+
+Ao abrir, a compra 1 sai a mercado no preço atual. Se ele for diferente do preço digitado, os níveis
+são recalculados com as mesmas porcentagens. As compras 2 e 3 só acontecem se o preço cair até elas.
+O stop gain fica como venda limitada na exchange. O stop loss é verificado pelo bot e só funciona com
+ele ligado. No gráfico do Painel, aparecem o stop gain, o preço médio, as compras que faltam e o stop
+loss.
+
+![Operação de preço médio no gráfico do Painel](docs/images/tela-operacao-dca.png)
+
+### Outras ações
+
+Com **Compra única**, o alvo e o stop ficam na exchange como OCO. A operação manual pode usar um par
+fora da lista da estratégia, com uma operação por par e até 8 pares ao todo. Essas
 operações continuam depois de reiniciar. Cada posição tem o botão **Encerrar**, que vende só aquela
 posição e mantém o bot ligado. Na grade, ele vende todos os níveis comprados daquele par.
 
@@ -328,6 +367,13 @@ cancela o OCO, vende a posição e encerra. Apague o arquivo antes de iniciar de
 
 Ajustar várias vezes nos mesmos dados, ou escolher só os pares aprovados, deixa o resultado otimista.
 Uma aprovação não garante lucro futuro.
+
+## Comparação com os robôs das corretoras
+
+Grandes corretoras oferecem recursos parecidos prontos, como Spot Grid, Spot DCA e ordens OCO ou
+TP/SL. Elas rodam nos servidores da corretora, mesmo com seu computador desligado. Este projeto serve
+para estudar e testar regras próprias na testnet, com histórico no seu banco, mas depende do computador
+ligado. Recursos e regras das corretoras mudam, então confira na página de cada uma.
 
 ## Limitações
 

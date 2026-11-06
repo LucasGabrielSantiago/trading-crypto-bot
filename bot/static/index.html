@@ -174,14 +174,23 @@ ol{margin:0;padding-left:20px}
     <div id="halted" class="notice warn" hidden></div>
     <div class="card">
       <h2>Nova operação</h2>
-      <p class="muted small" style="margin-bottom:12px">Compra agora a mercado e deixa alvo e stop na exchange. Você pode abrir uma operação por par, até 8 pares.</p>
-      <form id="newOperation" class="actions" style="align-items:flex-end">
-        <label style="flex:1 1 160px">Par<input id="opSymbol" type="text" list="pairOptions" placeholder="SOL/USDT" autocomplete="off" required></label>
-        <datalist id="pairOptions"></datalist>
-        <label style="flex:1 1 120px">Valor (USDT)<input id="opAmount" type="number" min="10" step="1" value="50" required></label>
-        <label style="flex:1 1 100px">Alvo (%)<input id="opTarget" type="number" min="0.1" step="0.1" value="6" required></label>
-        <label style="flex:1 1 100px">Stop (%)<input id="opStop" type="number" min="0.1" max="99" step="0.1" value="3" required></label>
-        <button id="opOpen" class="btn primary" type="submit">Abrir operação</button>
+      <p class="muted small" style="margin-bottom:12px">Monte o plano, confira os preços e abra. A primeira compra é feita a mercado, no preço atual da testnet. Uma operação por par, até 8 pares.</p>
+      <form id="newOperation" class="form">
+        <div class="actions" style="align-items:flex-end">
+          <label style="flex:1 1 160px">Par<input id="opSymbol" type="text" list="pairOptions" placeholder="SOL/USDT" autocomplete="off" required></label>
+          <datalist id="pairOptions"></datalist>
+          <label style="flex:1 1 200px">Estratégia<select id="opMode"><option value="simple">Compra única com alvo e stop</option><option value="dca">Preço médio (3 compras)</option></select></label>
+          <label style="flex:1 1 120px">Valor (USDT)<input id="opAmount" type="number" min="10" step="1" value="100" required></label>
+          <label style="flex:1 1 140px">Preço de entrada<input id="opEntry" type="number" min="0" step="any" required></label>
+        </div>
+        <div class="actions" style="align-items:flex-end">
+          <label id="opSpacingField" style="flex:1 1 160px">Distância entre compras (%)<input id="opSpacing" type="number" min="0.1" max="49" step="0.1" value="5"></label>
+          <label style="flex:1 1 140px">Stop gain (%)<input id="opTarget" type="number" min="0.1" step="0.1" value="6" required></label>
+          <label style="flex:1 1 140px">Preço de venda<input id="opTargetPrice" type="number" min="0" step="any" placeholder="Opcional"></label>
+          <label style="flex:1 1 140px">Stop loss (%)<input id="opStop" type="number" min="0.1" max="99" step="0.1" value="3" required></label>
+          <button id="opOpen" class="btn primary" type="submit">Abrir operação</button>
+        </div>
+        <div id="opPlan"></div>
       </form>
     </div>
     <div class="card"><h2>Capital por par</h2><div class="box"><table><thead><tr><th>Par</th><th>Estratégia</th><th>Situação</th><th>Capital do par</th><th>Em trading</th><th>Disponível</th><th>Resultado</th></tr></thead><tbody id="panelCapital"></tbody></table></div></div>
@@ -239,7 +248,7 @@ const token = document.body.dataset.token;
 const num = (v, d = 2) => Number(v).toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
 const short = (v) => Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 2 });
 let state = null, view = null, formReady = false, saveTimer = null, confirmTimer = null;
-let closeArmed = null, closeTimer = null;
+let closeArmed = null, closeTimer = null, targetDrafts = {};
 const STRATEGY_NAMES = { ranges: 'Máximas e mínimas', sma: 'Médias móveis', dca: 'Preço médio', breakout: 'Rompimento', reversion: 'Reversão à média', momentum: 'Momentum', grid: 'Grid' };
 const TIMEFRAME_NAMES = { '1h': '1h', '4h': '4h', '1d': '1d' };
 let pairConfig = {}, previewRequest = 0;
@@ -406,9 +415,9 @@ async function updateLive(data) {
     }
     const p = data.position, levels = [];
     if (p) {
-      levels.push({ name: 'Alvo', value: p.target, color: GREEN }, { name: p.levels ? 'Preço médio' : 'Entrada', value: p.entry_price, color: '#E8EDF2', dashed: true });
-      if (p.stop !== null && p.stop !== undefined) levels.push({ name: 'Stop', value: p.stop, color: RED });
-      if (p.levels && p.steps < 3) levels.push({ name: `Compra ${p.steps + 1}`, value: p.levels[p.steps - 1], color: '#FFB454', dashed: true });
+      levels.push({ name: data.manual ? 'Stop gain' : 'Alvo', value: p.target, color: GREEN }, { name: p.levels ? 'Preço médio' : 'Entrada', value: p.entry_price, color: '#E8EDF2', dashed: true });
+      if (p.stop !== null && p.stop !== undefined) levels.push({ name: data.manual ? 'Stop loss' : 'Stop', value: p.stop, color: RED });
+      if (p.levels) p.levels.slice(p.steps - 1).forEach((value, i) => levels.push({ name: `Compra ${p.steps + 1 + i}`, value, color: '#FFB454', dashed: true }));
     }
     panelChart.setLevels(levels);
   } catch (e) { $('liveNote').textContent = e.message; }
@@ -475,10 +484,11 @@ function renderPanel() {
   $('kPrice').textContent = data.price ? num(data.price) : '-';
   updateLive(data);
   const box = $('position');
+  if (box.contains(document.activeElement) && document.activeElement.dataset.target) return; // Não apaga o que está sendo digitado.
   if (!open.length) box.innerHTML = '<p class="muted">Nenhuma posição aberta.</p>';
   else box.replaceChildren(...open.flatMap((d) => {
     const p = d.position, gain = p.qty * p.target * 0.999 - p.entry_cost, stopLabel = state.settings.catastrophe_stop_pct ? `${short(state.settings.catastrophe_stop_pct * 100)}% abaixo do preço médio` : 'Sem stop';
-    const lines = p.grid ? [[d.symbol, `Grade: ${p.grid.held} de ${p.grid.total} níveis`], ['Em trading', `${num(d.trading)} USDT`], ['Investido', `${num(d.invested)} USDT`], ['Preço médio', num(p.entry_price)], ['Resultado em aberto', signed(d.openResult)], ['Ordens abertas', p.grid.orders], ['Faixa', `${num(p.grid.low)} a ${num(p.grid.high)}`], ['Proteção', stopLabel]] : p.levels ? [[d.symbol, `Compra ${p.steps} de 3`], ['Em trading', `${num(d.trading)} USDT`], ['Investido', `${num(d.invested)} USDT`], ['Preço médio', num(p.entry_price)], ['Ponto de empate', num(p.entry_cost / (p.qty * 0.999))], ['Resultado em aberto', signed(d.openResult)], ['Venda no alvo', p.sell_id ? `Ativa em ${num(p.target)}` : 'Aguardando'], ['Proteção', stopLabel], ['Ganho no alvo', signed(gain)]]
+    const lines = p.manual && p.levels ? [[d.symbol, `Preço médio manual: compra ${p.steps} de 3`], ['Em trading', `${num(d.trading)} USDT`], ['Investido', `${num(d.invested)} USDT`], ['Preço médio', num(p.entry_price)], ['Próxima compra', p.steps < 3 ? num(p.levels[p.steps - 1]) : 'Concluídas'], ['Stop gain', `${num(p.target)} (venda ${p.sell_id ? 'ativa' : 'aguardando'})`], ['Stop loss', num(p.stop)], ['Resultado em aberto', signed(d.openResult)]] : p.grid ? [[d.symbol, `Grade: ${p.grid.held} de ${p.grid.total} níveis`], ['Em trading', `${num(d.trading)} USDT`], ['Investido', `${num(d.invested)} USDT`], ['Preço médio', num(p.entry_price)], ['Resultado em aberto', signed(d.openResult)], ['Ordens abertas', p.grid.orders], ['Faixa', `${num(p.grid.low)} a ${num(p.grid.high)}`], ['Proteção', stopLabel]] : p.levels ? [[d.symbol, `Compra ${p.steps} de 3`], ['Em trading', `${num(d.trading)} USDT`], ['Investido', `${num(d.invested)} USDT`], ['Preço médio', num(p.entry_price)], ['Ponto de empate', num(p.entry_cost / (p.qty * 0.999))], ['Resultado em aberto', signed(d.openResult)], ['Venda no alvo', p.sell_id ? `Ativa em ${num(p.target)}` : 'Aguardando'], ['Proteção', stopLabel], ['Ganho no alvo', signed(gain)]]
       : [[d.symbol, p.oco_id ? 'OCO ativo' : 'Aguardando OCO'], ['Em trading', `${num(d.trading)} USDT`], ['Quantidade', num(p.qty, 5)], ['Risco até o stop', `${num(p.qty * (p.entry_price - p.stop))} USDT`], ['Ganho no alvo', signed(gain)]];
     const rows = lines.map(([a, b], i) => {
       const row = document.createElement('p'); row.className = 'row'; if (i === 0) row.style.marginTop = '8px';
@@ -493,7 +503,24 @@ function renderPanel() {
       if (closeArmed !== d.symbol) { closeArmed = d.symbol; clearTimeout(closeTimer); closeTimer = setTimeout(() => { closeArmed = null; renderPanel(); }, 5000); renderPanel(); return; }
       closeArmed = null; act(async () => { await api('/api/operations/close', { symbol: d.symbol }); });
     });
-    return state.running ? [...rows, close] : rows;
+    if (!state.running) return rows;
+    if (p.grid) return [...rows, close];
+    const form = document.createElement('form'); form.className = 'actions'; form.style.marginTop = '8px';
+    const label = document.createElement('label'); label.style.flex = '1 1 160px'; label.textContent = 'Novo preço de venda';
+    const input = document.createElement('input'); input.type = 'number'; input.step = 'any'; input.min = '0'; input.dataset.target = d.symbol;
+    input.value = targetDrafts[d.symbol] ?? Number(p.target.toPrecision(6));
+    input.addEventListener('input', () => { targetDrafts[d.symbol] = input.value; });
+    label.appendChild(input);
+    const save = document.createElement('button'); save.type = 'submit'; save.className = 'btn'; save.textContent = 'Alterar venda'; save.style.alignSelf = 'flex-end';
+    form.append(label, save);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      act(async () => {
+        await api('/api/operations/target', { symbol: d.symbol, price: Number(input.value) });
+        delete targetDrafts[d.symbol]; message(`Venda de ${d.symbol} alterada para ${input.value}.`);
+      });
+    });
+    return [...rows, form, close];
   }));
   const sides = { buy: 'Compra', sell: 'Venda' }, statuses = { filled: 'Executada', failed: 'Falhou', pending: 'Pendente' };
   const orders = all.flatMap((d) => d.orders).sort((a, b) => b.created_at - a.created_at).slice(0, 10);
@@ -580,7 +607,7 @@ async function refresh() {
   $('maxPairs').textContent = state.maxSymbols;
   if (view === 'connect' && state.hasKeys && !$('keysResult').textContent) show('studio');
   if (!view) show(!state.hasKeys ? 'connect' : state.running ? 'panel' : 'studio');
-    if (state.message || !/^(Operação|Pares)/.test($('message').textContent)) message(state.message, state.message && state.message.startsWith('Bot parado'));
+    if (state.message || !/^(Operação|Pares|Venda)/.test($('message').textContent)) message(state.message, state.message && state.message.startsWith('Bot parado'));
   renderResults(); renderStart(); renderPanel();
   if (state.hasKeys && Date.now() - walletLoaded > 30000) { walletLoaded = Date.now(); loadWallet(); }
 }
@@ -599,11 +626,57 @@ api('/api/markets').then((r) => {
   market = r.symbols; renderPairs();
   $('pairOptions').replaceChildren(...market.map((name) => { const o = document.createElement('option'); o.value = name; return o; }));
 }).catch(() => {});
+let opPrice = null, opPriceSymbol = null;
+async function loadOpPrice() {
+  const symbol = $('opSymbol').value.trim().toUpperCase();
+  if (!market.includes(symbol) || symbol === opPriceSymbol) return renderPlan();
+  try {
+    const data = await api(`/api/live-candles?symbol=${encodeURIComponent(symbol)}`);
+    opPrice = data.candles[data.candles.length - 1].close; opPriceSymbol = symbol;
+    $('opEntry').value = Number(opPrice.toPrecision(6));
+  } catch (e) { opPrice = null; opPriceSymbol = null; }
+  renderPlan();
+}
+function renderPlan() {
+  const dca = $('opMode').value === 'dca';
+  $('opSpacingField').hidden = !dca;
+  const amount = Number($('opAmount').value), entry = Number($('opEntry').value);
+  const target = Number($('opTarget').value) / 100, stop = Number($('opStop').value) / 100, gap = Number($('opSpacing').value) / 100;
+  const box = $('opPlan'), base = ($('opSymbol').value.split('/')[0] || 'ativo').toUpperCase();
+  if (!(amount > 0 && entry > 0 && target > 0 && stop > 0)) { box.replaceChildren(); return; }
+  const fee = 0.001, d = entry >= 100 ? 2 : entry >= 1 ? 4 : 8, money = (v) => `${num(v)} USDT`, price = (v) => num(v, d);
+  const qty = (v) => num(v, v >= 100 ? 2 : 4) + ' ' + base;
+  const buys = dca ? [[entry, 0.25], [entry * (1 - gap), 0.25], [entry * (1 - 2 * gap), 0.5]] : [[entry, 1]];
+  const rows = buys.map(([p, w], i) => [dca ? `Compra ${i + 1}` : 'Entrada', price(p), money(amount * w), qty(amount * w / p)]);
+  const quantity = buys.reduce((s, [p, w]) => s + amount * w / p, 0), average = amount / quantity;
+  const fixed = Number($('opTargetPrice').value) > 0;
+  const targetPrice = fixed ? Number($('opTargetPrice').value) : entry * (1 + target), stopPrice = buys[buys.length - 1][0] * (1 - stop);
+  const result = (sold, cost, exit) => sold * (1 - fee) * exit * (1 - fee) - cost;
+  const firstQty = amount * buys[0][1] / entry;
+  rows.push(dca ? ['Preço médio (3 compras)', price(average), money(amount), qty(quantity)] : null);
+  rows.push(['Stop gain', price(targetPrice), dca ? `+${num(result(quantity, amount, targetPrice))} USDT com as 3 compras` : `+${num(result(quantity, amount, targetPrice))} USDT`, `${targetPrice >= entry ? '+' : ''}${num((targetPrice / entry - 1) * 100)}% sobre a entrada${fixed ? ' (preço fixo)' : ''}`]);
+  rows.push(['Stop loss', price(stopPrice), `${num(result(quantity, amount, stopPrice))} USDT${dca ? ' com as 3 compras' : ''}`, dca ? `${num(stop * 100)}% abaixo da compra 3` : `-${num(stop * 100)}%`]);
+  if (dca) rows.push(['Só a compra 1 executar', price(targetPrice), `+${num(result(firstQty, amount * 0.25, targetPrice))} USDT no alvo`, `${money(amount * 0.75)} ficam livres`]);
+  const table = document.createElement('table');
+  table.innerHTML = '<thead><tr><th>Etapa</th><th>Preço</th><th>Valor</th><th>Quantidade ou resultado</th></tr></thead>';
+  tableRows(table.createTBody(), rows.filter(Boolean));
+  const wrap = document.createElement('div'); wrap.className = 'box'; wrap.appendChild(table);
+  const note = document.createElement('p'); note.className = 'muted small'; note.style.marginTop = '8px';
+  const off = opPrice && Math.abs(entry / opPrice - 1) > 0.005;
+  note.textContent = `Valores aproximados, com taxa de 0,1% na compra e na venda. ${amount} USDT a ${price(entry)} compram ${qty(amount / entry)} se tudo entrar no mesmo preço.` +
+    (off ? ` Atenção: o preço atual da testnet é ${price(opPrice)}. Ao abrir, a compra 1 sai a mercado nesse preço, e os níveis são recalculados com as mesmas porcentagens.` : '') +
+    (fixed ? ` O preço de venda fica fixo em ${price(targetPrice)}, mesmo que a entrada mude.` : ' Sem preço de venda, ele é calculado pelo stop gain (%) sobre a entrada real.');
+  if (off) note.className = 'notice warn small';
+  box.replaceChildren(wrap, note);
+}
+['opAmount', 'opEntry', 'opTarget', 'opTargetPrice', 'opStop', 'opSpacing', 'opMode'].forEach((id) => $(id).addEventListener('input', renderPlan));
+$('opSymbol').addEventListener('change', loadOpPrice);
+$('opSymbol').addEventListener('input', () => { if (market.includes($('opSymbol').value.trim().toUpperCase())) loadOpPrice(); });
 $('newOperation').addEventListener('submit', (event) => {
   event.preventDefault(); $('opOpen').disabled = true;
   act(async () => {
-    await api('/api/operations', { symbol: $('opSymbol').value, amount: Number($('opAmount').value), targetPct: Number($('opTarget').value), stopPct: Number($('opStop').value) });
-    $('opSymbol').value = ''; message('Operação aberta.'); setTimeout(() => { if ($('message').textContent === 'Operação aberta.') message(''); }, 4000);
+    await api('/api/operations', { symbol: $('opSymbol').value, amount: Number($('opAmount').value), targetPct: Number($('opTarget').value), stopPct: Number($('opStop').value), mode: $('opMode').value, spacingPct: Number($('opSpacing').value), targetPrice: Number($('opTargetPrice').value) || null });
+    $('opSymbol').value = ''; $('opTargetPrice').value = ''; opPriceSymbol = null; $('opPlan').replaceChildren(); message('Operação aberta.'); setTimeout(() => { if ($('message').textContent === 'Operação aberta.') message(''); }, 4000);
   }).finally(() => { $('opOpen').disabled = false; });
 });
 document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
